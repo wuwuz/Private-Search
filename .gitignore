@@ -1,4 +1,4 @@
-.pkl
-.npy
-.txt
-.tsv
+*.pkl
+*.npy
+*.txt
+*.tsv
