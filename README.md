@@ -23,6 +23,9 @@ Files
 `search-cluster-msmarco.py`: Do search based on the Tiptoe algorithm. First find the closest cluster, then search in the cluster.
 -- `cluster-msmarco-reduced-results.txt`: The results
 
+`search-cluster-msmarco-PIANO.py`: Do search modified to the PIANO PIR algorithm. Each cluster is a database document of size equal to the cluster size.
+-- `cluster-msmarco-PIANO-results.txt`: PIANO Results
+-- `cluster-msmarco-TIPTOE-results.txt`: Tiptoe Results (For comparison)
 `mrr.py`: Do search quality evaluation. Run `python mrr.py ResultFilePath`. 
 -- "RANKED" means how many ground truth are hit.
 -- "MRR" is a quality metric of the search. It can be interpreted as $1/(avg hit rank)$. So if you always find the hit in the first result, $MRR=1$. If you always find the hit in the 10-th result, $MRR=0.1$.
