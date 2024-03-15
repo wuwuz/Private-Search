@@ -1,7 +1,6 @@
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
-import os
 
 from cuml.decomposition import PCA as cuPCA
 from cuml.decomposition import IncrementalPCA as cuIPCA
@@ -29,12 +28,10 @@ doc_ids = np.load(docid_file)
 # Load the cluster representatives
 representatives_file = "msmarco-" + str(CLUSTER_NUM) + "-cluster-reps.npy"
 reps = np.load(representatives_file)
-print("shape of reps: ", reps.shape)
 
 # Load the cluster labels for each embedding vector
 labels_file = "msmarco-" + str(CLUSTER_NUM) + "-cluster-labels.npy"
 labels = np.load(labels_file)
-print("max label: ", np.max(labels))
 #print("labels: ", labels)
 
 # sort the vectors, so that the vectors in the same cluster are grouped together
@@ -59,10 +56,12 @@ with open('ipca_msmarco.pkl', 'rb') as f:
 # check if the number of components in the PCA model is the same as the number of dimensions in the embeddings
 if embeddings.shape[1] == ipca.n_components:
     # transform the query embeddings
+    print("Transforming query embeddings with PCA model...")
     #query_embeddings = ipca.transform(query_embeddings)
     DIM_REDUCED = True
 else:
     DIM_REDUCED = False
+    print("No need to transform")
 
 def generate_query_embeddings(sentences):
     tmp = model.encode(sentences)
@@ -83,12 +82,11 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, tiptoe = False):
     #distance_to_cluster = np.linalg.norm(sorted_embeddings[start:end] - query_vector, axis=1)
 
     if tiptoe == True:
-        #distance_to_cluster = np.linalg.norm(sorted_embeddings - query_vector, axis=1)[start:end]
+        # compute the dot product to the vectors in the cluster
         distance_to_cluster = np.dot(sorted_embeddings, query_vector)[start:end]
     else:
-        #distance_to_cluster = np.linalg.norm(sorted_embeddings[start:end] - query_vector, axis=1)
+        # compute the dot product to the vectors in the cluster
         distance_to_cluster = np.dot(sorted_embeddings[start:end], query_vector)
-    #print("distance_to_cluster shape", distance_to_cluster.shape)
     # find the top k nearest vectors with largest dot product
     # sort them in decending order based on the dot product
     top_k_idx = np.argsort(distance_to_cluster)[::-1][:k]
@@ -135,10 +133,22 @@ def read_queries(filepath):
             queries.append((question_id, sentence))
     return queries
 
-def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, k=10, tiptoe = False):
+def output_results_to_file(queries, doc_ids, output_filepath, k=10, tiptoe = False):
     """
     Process each query, generate embeddings, make the query and output the results to a file.
     """
+    max_query_length = 100
+    print("Processing", max_query_length, "queries")
+
+    start = time.time()
+    query_embeddings = generate_query_embeddings([sentence for question_id, sentence in queries][:max_query_length])
+    end = time.time()
+    print("Time to generate query embeddings: ", end - start)
+    print("Average time to generate each query embedding: ", (end - start)/max_query_length)
+
+    print(embeddings.shape) 
+
+
     # measure the time to process the queries
     start = time.time()
     current_time = datetime.now().strftime("%H:%M:%S")
@@ -149,7 +159,6 @@ def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, 
             #query_embedding = model.encode([sentence])  # Note: [sentence] to keep input as batch
             #distances, indices = query_index(sentence, k)
             distances, indices = find_approximate_nearest_neighbors(query_embeddings[t], k, tiptoe=tiptoe)
-            #print("distances: ", distances)
             outfile.write(f"Query: {question_id} {sentence}\n")
             for i in range(len(indices)):    
                 doc_id = doc_ids[indices[i]]
@@ -161,36 +170,18 @@ def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, 
                 now = datetime.now()
                 current_time = now.strftime("%H:%M:%S")
                 print(current_time + ":Processed", t,  " queries")
+            if t == max_query_length:
+                break
     end = time.time()
     current_time = datetime.now().strftime("%H:%M:%S")
     print(current_time + ":Processed", t,  " queries")
 
     # measure the time to process the queries in seconds
     print("Time to process the queries: ", end - start)
-    print("Average time to process each query: ", (end - start)/query_embeddings.shape[0])
+    print("Average time to process each query: ", (end - start)/max_query_length)
 
 
 query_filepath = 'msmarco-queries-1000.tsv'
 result_filepath = 'cluster-msmarco-results.txt'
-query_embedding_file = 'msmarco-queries-1000-embeddings.npy'
 queries = read_queries(query_filepath)
-# test if the query embedding file exists
-
-if os.path.exists(query_embedding_file):
-    print("Loading query embeddings from file")
-    query_embeddings = np.load(query_embedding_file)
-else :
-    print("Processing", len(queries), "queries")
-    start = time.time()
-    query_embeddings = generate_query_embeddings([sentence for question_id, sentence in queries])
-    end = time.time()
-    print("Time to generate query embeddings: ", end - start)
-    print("Average time to generate each query embedding: ", (end - start)/len(queries))
-    print(query_embeddings.shape)
-    np.save(query_embedding_file, query_embeddings)
-
-
-print("query embeddings shape", query_embeddings.shape)
-max_query_num = 100#len(queries)
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, tiptoe=True)
-
+output_results_to_file(queries[0:100], doc_ids, result_filepath, k = 100, tiptoe=False)

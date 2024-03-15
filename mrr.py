@@ -39,12 +39,14 @@ def read_ranked_qrel(filename):
 def compute_mrr(result_dict, real_dict):
     mrr = 0.0
     num_ranked = 0
+    tmp = 0
     for qid in result_dict:
         real = real_dict[qid]
         for i,result in enumerate(result_dict[qid]):
             if real == result and i < MRR_RANK:
                 num_ranked += 1
                 mrr += 1.0 / float(i + 1)
+        tmp += 1
     print("Num ranked = %d" % num_ranked)
     print("Total = %d" % len(result_dict))
     return mrr / float(len(result_dict))

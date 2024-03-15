@@ -2,6 +2,7 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
+import os
 
 from cuml.decomposition import PCA as cuPCA
 from cuml.decomposition import IncrementalPCA as cuIPCA
@@ -35,6 +36,7 @@ model = SentenceTransformer('msmarco-distilbert-base-tas-b')
 def create_faiss_index(embeddings):
     dimension = embeddings.shape[1]  # Assuming 768-dimensional embeddings
     # use faiss hnsw to create the index
+    #index = faiss.IndexHNSWFlat(dimension, 32)
     index = faiss.IndexHNSWFlat(dimension, 32)
     #index = faiss.IndexFlatIP(dimension) 
     index.add(embeddings)  # Adding the embeddings to the index
@@ -67,16 +69,15 @@ def read_queries(filepath):
             queries.append((question_id, sentence))
     return queries
 
-def output_results_to_file(queries, index, model, doc_ids, output_filepath, k=10):
+def output_results_to_file(queries, query_embeddings, index, model, doc_ids, output_filepath, k=10):
     """
     Process each query, generate embeddings, query the FAISS index, and output the results to a file.
     """
 
-    start = time.process_time() 
-    query_embeddings = generate_query_embeddings([sentence for question_id, sentence in queries])
-    end = time.process_time()
-    print("Time to generate query embeddings: ", end - start)
-    print("Average time to generate each query embedding: ", (end - start)/len(queries))
+    #start = time.process_time() 
+    #end = time.process_time()
+    #print("Time to generate query embeddings: ", end - start)
+    #print("Average time to generate each query embedding: ", (end - start)/len(queries))
 
     vector_dim = query_embeddings.shape[1]
 
@@ -107,13 +108,21 @@ def output_results_to_file(queries, index, model, doc_ids, output_filepath, k=10
 # Example Usage
 #docid_filepath = 'msmarco1000_docid.npy'
 #embeddings_filepath = 'msmarco1000_embeddings.npy'  # Assuming .npy format for simplicity
-docid_filepath = 'msmarco_docid.npy'
-embeddings_filepath = 'msmarco_embeddings_reduced.npy'  # Assuming .npy format for simplicity
+docid_filepath = 'msmarco_docid_permuted.npy'
+embeddings_filepath = 'msmarco_embeddings_reduced_permuted.npy'  # Assuming .npy format for simplicity
 query_filepath = 'msmarco-queries-1000.tsv'
 result_filepath = 'faiss-msmarco-reduced-results.txt'
 
+index_file = 'msmarco_hnsw_index_permuted.faiss'
+
 doc_ids, embeddings = load_data(docid_filepath, embeddings_filepath)
-index = create_faiss_index(embeddings)
+
+if os.path.exists(index_file):
+    print("Loading index from file")
+    index = faiss.read_index(index_file)
+else:
+    print("Creating index...")
+    index = create_faiss_index(embeddings)
 
 # load the PCA model
 with open('ipca_msmarco.pkl', 'rb') as f:
@@ -141,6 +150,25 @@ for i, sentence in enumerate(example_sentences):
         doc_id = doc_ids[indices[i][j]]
         print(f"DocID: {doc_id}, Distance: {distances[i][j]}")
 
+query_embedding_file = 'msmarco-queries-1000-embeddings.npy'
 queries = read_queries(query_filepath)
+# test if the query embedding file exists
+
+if os.path.exists(query_embedding_file):
+    print("Loading query embeddings from file")
+    query_embeddings = np.load(query_embedding_file)
+else :
+    print("Processing", len(queries), "queries")
+    start = time.time()
+    query_embeddings = generate_query_embeddings([sentence for question_id, sentence in queries])
+    end = time.time()
+    print("Time to generate query embeddings: ", end - start)
+    print("Average time to generate each query embedding: ", (end - start)/len(queries))
+    print(query_embeddings.shape)
+    np.save(query_embedding_file, query_embeddings)
+
+queries = read_queries(query_filepath)
+#query_embeddings = generate_query_embeddings([sentence for question_id, sentence in queries])
 #output_results_to_file(queries, index, model, doc_ids, result_filepath, k = 50)
-output_results_to_file(queries[0:100], index, model, doc_ids, result_filepath, k = 100)
+max_query_num = 1000#len(queries)
+output_results_to_file(queries[0:max_query_num], query_embeddings[0:max_query_num], index, model, doc_ids, result_filepath, k = 100)
