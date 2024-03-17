@@ -76,9 +76,11 @@ func (s *PianoPIRServer) PrivateQuery(idxs []uint32) ([]uint64, error) {
 		}
 
 		// xor the idx*DBEntrySize-th to (idx+1)*DBEntrySize-th elements to ret
-		for i := uint32(0); i < s.config.DBEntrySize; i++ {
-			ret[i] ^= s.rawDB[idx*s.config.DBEntrySize+i]
-		}
+		EntryXor(ret, s.rawDB[idx*s.config.DBEntrySize:(idx+1)*s.config.DBEntrySize], s.config.DBEntrySize)
+
+		//for i := uint32(0); i < s.config.DBEntrySize; i++ {
+		//	ret[i] ^= s.rawDB[idx*s.config.DBEntrySize+i]
+		//	}
 	}
 
 	return ret, nil
@@ -249,10 +251,14 @@ func (c *PianoPIRClient) Initialization() {
 	c.localCache = make(map[uint32][]uint64)
 }
 
+// entrySize has to be a multiple of 4 !!!!!!!!!!!!!
 func EntryXor(a []uint64, b []uint64, entrySize uint32) {
-	for i := uint32(0); i < entrySize; i++ {
-		a[i] ^= b[i]
-	}
+
+	xorSlices(a, b, int(entrySize))
+
+	//for i := uint32(0); i < entrySize; i++ {
+	//	a[i] ^= b[i]
+	//	}
 }
 
 func (c *PianoPIRClient) Preprocessing(rawDB []uint64) {
@@ -338,11 +344,23 @@ func (c *PianoPIRClient) UpdatePreprocessing(chunkId uint32, chunk []uint64) {
 	//fmt.Println("finished replacement")
 }
 
-func (c *PianoPIRClient) Query(idx uint32, server *PianoPIRServer) ([]uint64, error) {
+func (c *PianoPIRClient) Query(idx uint32, server *PianoPIRServer, realQuery bool) ([]uint64, error) {
+
 	ret := make([]uint64, c.config.DBEntrySize)
 	// initialize ret to be all zeros
 	for i := uint32(0); i < c.config.DBEntrySize; i++ {
 		ret[i] = 0
+	}
+
+	// if it's a dummy query, then just generate c.config.SetSize random numbers between 0...c.config.ChunkSize
+	if !realQuery {
+		set := make([]uint32, c.config.SetSize)
+		for i := uint32(0); i < c.config.SetSize; i++ {
+			set[i] = i*c.config.ChunkSize + (rand.Uint32() & (c.config.ChunkSize - 1))
+		}
+		_, err := server.PrivateQuery(set)
+
+		return ret, err
 	}
 
 	if idx >= c.config.DBSize {
@@ -389,7 +407,7 @@ func (c *PianoPIRClient) Query(idx uint32, server *PianoPIRServer) ([]uint64, er
 	}
 
 	if hitId == DefaultProgramPoint {
-		log.Printf("No hit hint in the primary hint table, current idx = %v", idx)
+		//log.Printf("No hit hint in the primary hint table, current idx = %v", idx)
 		return ret, fmt.Errorf("no hit hint in the primary hint table")
 	}
 
@@ -486,14 +504,14 @@ func (p *PianoPIR) Preprocessing() {
 	p.client.Preprocessing(p.server.rawDB)
 }
 
-func (p *PianoPIR) Query(idx uint32) ([]uint64, error) {
+func (p *PianoPIR) Query(idx uint32, realQuery bool) ([]uint64, error) {
 
 	if p.client.FinishedQueryNum == p.client.MaxQueryNum {
 		fmt.Printf("exceed the maximum number of queries %v and redo preprocessing\n", p.client.MaxQueryNum)
 		p.client.Preprocessing(p.server.rawDB)
 	}
 
-	return p.client.Query(idx, p.server)
+	return p.client.Query(idx, p.server, realQuery)
 }
 
 func (p *PianoPIR) LocalStorageSize() float64 {

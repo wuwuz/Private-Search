@@ -167,3 +167,5 @@ func GetLongKey(key *PrfKey128) []uint32 {
 	expandKeyAsm(&key[0], &longKey[0])
 	return longKey
 }
+
+func xorSlices(dst, src []uint64, n int)

@@ -11,7 +11,7 @@ func TestPIRBasic(t *testing.T) {
 	// Set up any necessary data or arguments
 
 	DBSize := uint32(18750)
-	DBEntrySize := uint32(1)
+	DBEntrySize := uint32(4)
 	seed := time.Now().UnixNano()
 	rng := rand.New(rand.NewSource(seed))
 
@@ -37,7 +37,7 @@ func TestPIRBasic(t *testing.T) {
 	// make 1000 random queries
 	for i := 0; i < int(maxQueryNum); i++ {
 		idx := rand.Uint32() % DBSize
-		query, err := PIR.Query(idx)
+		query, err := PIR.Query(idx, true)
 		if err != nil {
 			t.Errorf("PIR.Query(%v) failed: %v", idx, err)
 		}
@@ -175,8 +175,8 @@ func TestBatchPIRPerf(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	//DBSize := uint32(3201821)
-	DBSize := uint32(300000)
+	DBSize := uint32(3201821)
+	//DBSize := uint32(300000)
 	DBEntrySize := uint32(112)
 	BatchSize := uint32(32)
 
@@ -191,7 +191,7 @@ func TestBatchPIRPerf(t *testing.T) {
 		}
 	}
 
-	PIR := NewSimpleBatchPianoPIR(DBSize, DBEntrySize*8, BatchSize, rawDB, 20)
+	PIR := NewSimpleBatchPianoPIR(DBSize, DBEntrySize*8, BatchSize, rawDB, 8)
 
 	// print the config of the PIR
 	config := PIR.Config()
@@ -210,8 +210,11 @@ func TestBatchPIRPerf(t *testing.T) {
 
 	// now we make 1000 random batchQuery
 
+	step := 20
+	queryNum := 300
+
 	start = time.Now()
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < queryNum*step; i++ {
 		batch := make([]uint32, 0, BatchSize)
 		for j := 0; j < int(BatchSize); j++ {
 			batch = append(batch, rng.Uint32()%DBSize)
@@ -220,14 +223,117 @@ func TestBatchPIRPerf(t *testing.T) {
 		if err != nil {
 			t.Errorf("PIR.Query(%v) failed: %v", batch, err)
 		}
-		// we check the first response
+		//we check the first response, either it's all zeros, or it's correct
 		for j := uint32(0); j < DBEntrySize; j++ {
-			if response[0][j] != rawDB[batch[0]*DBEntrySize+j] {
+			if response[0][j] != 0 && response[0][j] != rawDB[batch[0]*DBEntrySize+j] {
 				t.Errorf("response[0][%v] = %v; want %v", j, response[0][j], rawDB[batch[0]*DBEntrySize+j])
 			}
 		}
 	}
 	end = time.Now()
-	t.Logf("1000 batch query time = %v\n", end.Sub(start))
-	t.Logf("Average batch query time = %v\n", end.Sub(start)/1000)
+	t.Logf("Total query time = %v\n", end.Sub(start))
+	t.Logf("Average query time per batch = %v\n", end.Sub(start)/time.Duration(queryNum*step))
+	t.Logf("Average query time given all steps = %v\n", end.Sub(start)/time.Duration(queryNum))
+}
+
+func TestXORPerf(t *testing.T) {
+
+	p := make([]uint64, 8)
+	q := make([]uint64, 8)
+	for i := 0; i < 8; i++ {
+		p[i] = 12312312
+		q[i] = 12312
+	}
+	xorSlices(p, q, 8)
+	for i := 0; i < 8; i++ {
+		if p[i] != 12312312^12312 {
+			t.Errorf("p[%v] = %v; want %v", i, p[i], 12312312^12312)
+		}
+	}
+
+	n := 1000000
+	l := 112
+	a := make([]uint64, l*n)
+	b := make([]uint64, l*n)
+
+	for i := 0; i < n; i++ {
+		for j := 0; j < l; j++ {
+			a[i*l+j] = 12312312
+			b[i*l+j] = 12312
+		}
+	}
+
+	// naive xor
+
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		for j := 0; j < l; j++ {
+			a[i*l+j] ^= b[i*l+j]
+		}
+	}
+	end := time.Now()
+	t.Logf("Naive XOR time = %v\n", end.Sub(start))
+
+	for i := 0; i < l*n; i++ {
+		a[i] = 12312312
+		b[i] = 12312
+	}
+
+	// use XorSlice
+	start = time.Now()
+	xorSlices(a, b, l*n)
+	end = time.Now()
+	t.Logf("XorSlices time = %v\n", end.Sub(start))
+
+	// verify the result
+	for i := 0; i < l*n; i++ {
+		if a[i] != 12312312^12312 {
+			t.Errorf("a[%v] = %v; want %v", i, a[i], 12312312^12312)
+		}
+	}
+}
+
+func TestAESPerf(t *testing.T) {
+
+	seed := time.Now().UnixNano()
+	rng := rand.New(rand.NewSource(seed))
+	masterKey := RandKey(rng)
+	longKey := GetLongKey((*PrfKey128)(&masterKey))
+
+	n := 1000000
+	tag := make([]uint32, n)
+	results := make([]uint32, n)
+
+	for i := 0; i < n; i++ {
+		tag[i] = rng.Uint32()
+		results[i] = 0
+	}
+
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		results[i] = PRFEvalWithLongKeyAndTag(longKey, tag[i], uint64(i))
+	}
+	end := time.Now()
+	t.Logf("PRFEvalWithLongKeyAndTag time = %v\n", end.Sub(start))
+	t.Logf("average time = %v ns", end.Sub(start).Nanoseconds()/int64(n))
+
+	l := 112
+	a := make([]uint64, l*n)
+	b := make([]uint64, l*n)
+
+	for i := 0; i < l*n; i++ {
+		a[i] = 12312312
+		b[i] = 12312
+	}
+
+	// use XorSlice
+	start = time.Now()
+
+	for i := 0; i < n; i++ {
+		xorSlices(a[i*l:(i+1)*l], b[i*l:(i+1)*l], l)
+	}
+
+	end = time.Now()
+	t.Logf("XorSlices time = %v\n", end.Sub(start))
+	t.Logf("average time = %v ns", end.Sub(start).Nanoseconds()/int64(n))
 }

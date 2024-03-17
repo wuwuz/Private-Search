@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build amd64,!gccgo
+// +build amd64,!appengine,!gccgo
 
 // func xor16(dst, a, b *byte)
 TEXT ·xor16(SB),4,$0
@@ -124,4 +124,34 @@ TEXT _expand_key_128<>(SB),4,$0
 	MOVUPS X0, (BX)
 	ADDQ $16, BX
 	RET
-	
+
+// Ensure your build environment and CPU support AVX before using this.
+// This is a conceptual example to illustrate 256-bit XOR operations using AVX.
+
+// func xorSlices(dst, src []uint64, len int)
+
+TEXT ·xorSlices(SB), $0-56
+    MOVQ dst+0(FP), SI         // Load pointer to dst slice
+    MOVQ src+24(FP), DI        // Load pointer to src slice
+    MOVQ n+32(FP), CX          // Load number of elements to process into CX
+
+    // Calculate the number of 256-bit chunks (4 uint64 elements per chunk)
+    SHRQ $2, CX                // Divide CX by 4 because we process 4 elements per iteration
+
+loop:
+    TESTQ CX, CX               // Test if the loop counter is zero
+    JZ    done                 // If zero, we're done
+
+    VMOVDQU (SI), Y0         // Load 256 bits from dst into YMM0
+    VMOVDQU (DI), Y1         // Load 256 bits from src into YMM1
+    VPXOR Y1, Y0, Y0     // Perform XOR operation between YMM1 and YMM0, result in YMM0
+    VMOVDQU Y0, (SI)         // Store result back to dst from YMM0
+
+    ADDQ $32, SI               // Advance pointers by 256 bits (32 bytes)
+    ADDQ $32, DI
+    DECQ CX                    // Decrement loop counter
+    JNZ  loop                  // Continue if not done
+
+done:
+    VZEROUPPER                 // Clear upper part of YMM registers to avoid AVX-SSE transition penalty
+    RET                        // Return

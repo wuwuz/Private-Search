@@ -207,4 +207,8 @@ else :
     print(query_embeddings.shape)
     np.save(query_embedding_file, query_embeddings) 
 
+start = time.time()
 output_results_to_file(query_embeddings, doc_ids, result_filepath, k = 100, step = 20)
+end = time.time()
+print("Time to process the queries: ", end - start)
+print("Average time to process each query: ", (end - start)/query_embeddings.shape[0])

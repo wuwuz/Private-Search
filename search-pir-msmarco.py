@@ -176,6 +176,7 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
 
     total_query = 0
     succ_query = 0
+    cached_query = 0
 
     for i in range(step):
         #print("Step: ", i)
@@ -190,25 +191,35 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
         #print("in step ", i, "current_idx: ", current_idx, "current_neighbors size", len(current_neighbors))
         vertex_info = query_vertex_info(current_neighbors, explored_graph, explored_vector) # TODO: optimize it so that repeated queries are not made
 
+
+        if len(to_be_explored) > 0:
+            _, current_idx_2 = heapq.heappop(to_be_explored)
+            current_neighbors_2 = explored_graph[current_idx_2]
+
+            vertex_info_2 = query_vertex_info(current_neighbors_2, explored_graph, explored_vector)
+            vertex_info = vertex_info + vertex_info_2
+
         #print("in step ", i, "retrieving ", len(vertex_info))
 
-        sorted_neighbors = sorted(current_neighbors)
+        #sorted_neighbors = sorted(current_neighbors)
 
 
-        succ_query_list = []
+        #succ_query_list = []
 
-        for vertex in vertex_info:
-            total_query += 1
-            if vertex.flag == True or vertex.index in visited:
-                succ_query += 1
-                succ_query_list.append(vertex.index) 
-                continue
+        #succ_query_list.append(vertex.index) 
         #print("in step ", i, "current_idx: ", current_idx, "current_neighbors size", len(current_neighbors), "sorted_neighbors: ", sorted_neighbors)
         #print("succ query list: ", succ_query_list)
 
         for vertex in vertex_info:
-            if vertex.flag == False or vertex.index in visited:
+            total_query += 1
+            if vertex.flag == False:
                 continue
+
+            if vertex.index in visited:
+                cached_query += 1
+                continue
+            else:
+                succ_query += 1
 
             visited.add(vertex.index)
             explored_graph[vertex.index] = vertex.neighbors
@@ -232,7 +243,8 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
     distances = [x[0] for x in visited_tuples[:k]]
     ids = [x[1] for x in visited_tuples[:k]]
 
-    print("Total Query: ", total_query, "Succ Query: ", succ_query, "ratio: ", succ_query/total_query)
+    #if total_query > 0:
+    #    print("Total Query: ", total_query, "Succ Query: ", succ_query,"ratio: ", succ_query/total_query, "Cached Query: ", cached_query, "ratio: ", cached_query/total_query)
 
     return distances, ids, hit_step
 
@@ -322,7 +334,7 @@ max_query_num = 1000
 
 # clock the total time
 start = time.time()
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 20)
+output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 8)
 end = time.time()
 print("Total Time: ", end - start)
 print("Average Time: ", (end - start)/max_query_num)

@@ -129,3 +129,27 @@ TEXT ·xor16(SB), NOSPLIT|NOFRAME, $0
 	EOR	R12, R14, R14
 	STP.P	(R13, R14), 16(R0)
 	RET
+
+// func xorSlices(a, b []uint64, n int)
+TEXT ·xorSlices(SB), $0-48
+    MOVQ a+0(FP), SI   // SI = &a
+    MOVQ b+24(FP), DI  // DI = &b
+    MOVQ n+40(FP), BX  // BX = n
+    SHRQ $3, BX        // BX /= 8 (process 8 elements per iteration)
+    CMPQ BX, $0        // Check if BX is 0
+    JE end             // If so, exit
+
+    XORQ CX, CX        // CX = 0 (loop counter)
+
+loop:
+    MOVOU (SI)(CX*8), X0   // Load 8 elements from a into X0
+    MOVOU (DI)(CX*8), X1   // Load 8 elements from b into X1
+    PXOR X1, X0             // XOR X0 and X1, store result in X0
+    MOVOU X0, (SI)(CX*8)   // Store the result back in a
+
+    ADDQ $8, CX         // Increment loop counter by 8
+    CMPQ CX, BX         // Check if we've processed all elements
+    JNE loop            // If not, continue the loop
+
+end:
+    RET

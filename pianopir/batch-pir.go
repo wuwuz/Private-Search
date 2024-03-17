@@ -12,6 +12,7 @@ import (
 const (
 	RealQueryPerPartition = 2
 	QueryPerPartition     = 2
+	DefaultValue          = 0xdeadbeef
 )
 
 type SimpleBatchPianoPIRConfig struct {
@@ -133,27 +134,31 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
 	responses := make(map[uint32][]uint64)
 
 	for i := uint32(0); i < p.config.PartitionNum; i++ {
-		start := i * p.config.PartitionSize
+		//start := i * p.config.PartitionSize
 		//end := min((i+1)*p.config.PartitionSize, p.config.DBSize)
 
 		// case 1: if there are not enough queries, just pad with random indices in the partition
 		if len(partitionQueries[i]) < QueryPerPartition {
 			for j := uint32(len(partitionQueries[i])); j < QueryPerPartition; j++ {
-				partitionQueries[i] = append(partitionQueries[i], start)
+				partitionQueries[i] = append(partitionQueries[i], DefaultValue)
 			}
 		}
 
 		// now we make QueryPerPartition queries to the sub PIR
 		for j := uint32(0); j < QueryPerPartition; j++ {
-			query, _ := p.subPIR[i].Query(partitionQueries[i][j] - i*p.config.PartitionSize)
-			//if err != nil {
+			if partitionQueries[i][j] == DefaultValue {
+				_, _ = p.subPIR[i].Query(0, false) // just make a dummy query
+			} else {
+				query, _ := p.subPIR[i].Query(partitionQueries[i][j]-i*p.config.PartitionSize, true)
+				//if err != nil {
 
-			//log.Printf("the queries to this sub pir is: %v, the offset is %v\n", partitionQueries[i], partitionQueries[i][j]-i*p.config.PartitionSize)
-			//log.Printf("All the queries are %v\n", partitionQueries)
-			//log.Printf("SimpleBatchPianoPIR.Query: subPIR[%v].Query(%v) failed: %v\n", i, partitionQueries[i][j], err)
-			//	return nil, err
-			//	}
-			responses[partitionQueries[i][j]] = query
+				//log.Printf("the queries to this sub pir is: %v, the offset is %v\n", partitionQueries[i], partitionQueries[i][j]-i*p.config.PartitionSize)
+				//log.Printf("All the queries are %v\n", partitionQueries)
+				//log.Printf("SimpleBatchPianoPIR.Query: subPIR[%v].Query(%v) failed: %v\n", i, partitionQueries[i][j], err)
+				//	return nil, err
+				//	}
+				responses[partitionQueries[i][j]] = query
+			}
 		}
 	}
 
@@ -179,7 +184,8 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
 	//fmt.Println("finished query num", p.subPIR[0].client.FinishedQueryNum)
 
 	// now test if the subPIR has reached the max query num, redo the preprocessing
-	if p.FinishedQueryNum >= p.subPIR[0].client.MaxQueryNum-1 {
+	// -2 means we want to do the preprocessing before the last query
+	if p.FinishedQueryNum*QueryPerPartition >= p.subPIR[0].client.MaxQueryNum-2 {
 		fmt.Printf("Already reached the max query num %v, redo the preprocessing\n", p.FinishedQueryNum)
 		p.Preprocessing()
 	} else {
