@@ -162,6 +162,35 @@ func PRFEvalWithLongKeyAndTag(longKey []uint32, tag uint32, x uint64) uint32 {
 	return binary.LittleEndian.Uint32(dsc)
 }
 
+func PRFEvalWithLongKeyAndTagPacked(longKey []uint32, tag uint32, x uint64) [4]uint32 {
+	var src = make([]byte, 16)
+	var dsc = make([]byte, 16)
+
+	head := tag >> 2
+
+	binary.LittleEndian.PutUint64(src, (uint64(head)<<35)+x)
+	aes128MMO(&longKey[0], &dsc[0], &src[0])
+
+	ret := [4]uint32{}
+	for i := 0; i < 4; i++ {
+		ret[i] = binary.LittleEndian.Uint32(dsc[i*4 : (i+1)*4])
+	}
+	return ret
+}
+
+func PRFEvalWithLongKeyAndTagExtracted(longKey []uint32, tag uint32, x uint64) uint32 {
+	var src = make([]byte, 16)
+	var dsc = make([]byte, 16)
+
+	head := tag >> 2
+	tail := tag & 3
+
+	binary.LittleEndian.PutUint64(src, (uint64(head)<<35)+x)
+	aes128MMO(&longKey[0], &dsc[0], &src[0])
+
+	return binary.LittleEndian.Uint32(dsc[tail*4 : (tail+1)*4])
+}
+
 func GetLongKey(key *PrfKey128) []uint32 {
 	var longKey = make([]uint32, 11*4)
 	expandKeyAsm(&key[0], &longKey[0])

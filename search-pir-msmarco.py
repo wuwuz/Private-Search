@@ -334,7 +334,7 @@ max_query_num = 1000
 
 # clock the total time
 start = time.time()
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 8)
+output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 14)
 end = time.time()
 print("Total Time: ", end - start)
 print("Average Time: ", (end - start)/max_query_num)

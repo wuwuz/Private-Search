@@ -10,7 +10,7 @@ func TestPIRBasic(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	DBSize := uint32(18750)
+	DBSize := uint32(187500)
 	DBEntrySize := uint32(4)
 	seed := time.Now().UnixNano()
 	rng := rand.New(rand.NewSource(seed))
@@ -30,12 +30,19 @@ func TestPIRBasic(t *testing.T) {
 	t.Logf("hint num: %v", PIR.client.primaryHintNum)
 	t.Logf("max query num: %v", PIR.client.MaxQueryNum)
 
-	maxQueryNum := PIR.client.MaxQueryNum
+	//_maxQueryNum := PIR.client.MaxQueryNum
 
 	PIR.Preprocessing()
+	t.Logf("finished preprocessing")
+	t.Logf("PIR storage %v MB", PIR.LocalStorageSize()/1024/1024)
+
+	PIR.verifyPreprocessing()
+	t.Logf("finished verifying preprocessing")
 
 	// make 1000 random queries
-	for i := 0; i < int(maxQueryNum); i++ {
+	//for i := 0; i < int(maxQueryNum); i++ {
+	errorFlag := false
+	for i := 0; i < int(1000); i++ {
 		idx := rand.Uint32() % DBSize
 		query, err := PIR.Query(idx, true)
 		if err != nil {
@@ -45,11 +52,16 @@ func TestPIRBasic(t *testing.T) {
 		for j := uint32(0); j < DBEntrySize; j++ {
 			if query[j] != rawDB[idx*DBEntrySize+j] {
 				t.Errorf("query[%v] = %v; want %v", idx, query[j], rawDB[idx*DBEntrySize+j])
+				errorFlag = true
 			}
 		}
-
-		if i == 0 {
+		if errorFlag {
 			t.Logf("response = %v", query)
+			break
+		}
+
+		if i%100 == 0 {
+			t.Logf("The (%v)-th PIR.Query(%v) passed", i, idx)
 		}
 
 		// just output a message to show the progress
@@ -336,4 +348,43 @@ func TestAESPerf(t *testing.T) {
 	end = time.Now()
 	t.Logf("XorSlices time = %v\n", end.Sub(start))
 	t.Logf("average time = %v ns", end.Sub(start).Nanoseconds()/int64(n))
+}
+
+func TestAESPacked(t *testing.T) {
+	seed := time.Now().UnixNano()
+	rng := rand.New(rand.NewSource(seed))
+	masterKey := RandKey(rng)
+	longKey := GetLongKey((*PrfKey128)(&masterKey))
+
+	n := 1000000
+	tag := make([]uint32, n)
+	resultsPacked := make([]uint32, n)
+	resultsExtracted := make([]uint32, n)
+
+	for i := 0; i < n; i++ {
+		tag[i] = uint32(i)
+	}
+
+	start := time.Now()
+	for i := 0; i < n; i += 4 {
+		ret := PRFEvalWithLongKeyAndTagPacked(longKey, tag[i], 0)
+		resultsPacked[i], resultsPacked[i+1], resultsPacked[i+2], resultsPacked[i+3] = ret[0], ret[1], ret[2], ret[3]
+	}
+	end := time.Now()
+	t.Logf("PRFEvalWithLongKeyAndTagPacked time = %v\n", end.Sub(start))
+	t.Logf("average time = %v ns", end.Sub(start).Nanoseconds()/int64(n))
+
+	start = time.Now()
+	for i := 0; i < n; i++ {
+		resultsExtracted[i] = PRFEvalWithLongKeyAndTagExtracted(longKey, tag[i], 0)
+	}
+	end = time.Now()
+	t.Logf("PRFEvalWithLongKeyAndTagExtracted time = %v\n", end.Sub(start))
+	t.Logf("average time = %v ns", end.Sub(start).Nanoseconds()/int64(n))
+
+	for i := 0; i < n; i++ {
+		if resultsPacked[i] != resultsExtracted[i] {
+			t.Errorf("resultsPacked[%v] = %v; want %v", i, resultsPacked[i], resultsExtracted[i])
+		}
+	}
 }
