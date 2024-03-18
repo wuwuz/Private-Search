@@ -518,6 +518,13 @@ func (p *PianoPIR) LocalStorageSize() float64 {
 	return p.client.LocalStorageSize()
 }
 
+func (p *PianoPIR) CommCostPerQuery() float64 {
+
+	// upload contains p.config.SetSize 32-bit integers
+	// download contains p.config.DBEntrySize 64-bit integers
+	return float64(p.config.SetSize*4 + p.config.DBEntrySize*8)
+}
+
 func (p *PianoPIR) Config() *PianoPIRConfig {
 	return p.config
 }

@@ -81,13 +81,23 @@ func NewSimpleBatchPianoPIR(DBSize uint32, DBEntryByteNum uint32, BatchSize uint
 	}
 }
 
+func (p *SimpleBatchPianoPIR) PrintInfo() {
+	fmt.Printf("-----------BatchPIR config --------\n")
+	DBSizeInBytes := p.config.DBSize * p.config.DBEntryByteNum
+	fmt.Printf("DB size in MB = %v\n", DBSizeInBytes/1024/1024)
+	fmt.Printf("DBSize: %v, DBEntryByteNum: %v, BatchSize: %v, PartitionNum: %v, PartitionSize: %v, ThreadNum: %v, FailureProbLog2: %v\n", p.config.DBSize, p.config.DBEntryByteNum, p.config.BatchSize, p.config.PartitionNum, p.config.PartitionSize, p.config.ThreadNum, p.config.FailureProbLog2)
+	maxQuery := p.subPIR[0].client.MaxQueryNum / QueryPerPartition
+	fmt.Printf("max query num = %v\n", maxQuery)
+	fmt.Printf("max query per chunk = %v\n", p.subPIR[0].client.maxQueryPerChunk)
+	fmt.Printf("total storage = %v MB\n", p.LocalStorageSize()/1024/1024)
+	fmt.Printf("comm cost per query = %v KB\n", p.CommCostPerQuery()/1024)
+	fmt.Printf("amortized preprocessing comm cost = %v KB\n", float64(DBSizeInBytes)/float64(maxQuery)/1024)
+	fmt.Printf("total amortized comm cost = %v KB\n", float64(DBSizeInBytes)/float64(maxQuery)/1024+p.CommCostPerQuery()/1024)
+	fmt.Printf("-----------------------------\n")
+}
+
 func (p *SimpleBatchPianoPIR) Preprocessing() {
-	log.Printf("-----------BatchPIR config --------\n")
-	log.Printf("DB size in MB = %v\n", p.config.DBSize*p.config.DBEntryByteNum/1024/1024)
-	log.Printf("max query num = %v\n", p.subPIR[0].client.MaxQueryNum)
-	log.Printf("max query per chunk = %v\n", p.subPIR[0].client.maxQueryPerChunk)
-	log.Printf("total storage = %v MB\n", p.LocalStorageSize()/1024/1024)
-	log.Printf("-----------------------------\n")
+	p.PrintInfo()
 
 	// now we do the preprocessing
 	// we need to clock the time
@@ -199,6 +209,14 @@ func (p *SimpleBatchPianoPIR) LocalStorageSize() float64 {
 	ret := float64(0)
 	for i := uint32(0); i < p.config.PartitionNum; i++ {
 		ret += p.subPIR[i].LocalStorageSize()
+	}
+	return ret
+}
+
+func (p *SimpleBatchPianoPIR) CommCostPerQuery() float64 {
+	ret := float64(0)
+	for i := uint32(0); i < p.config.PartitionNum; i++ {
+		ret += p.subPIR[i].CommCostPerQuery()
 	}
 	return ret
 }

@@ -151,9 +151,23 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
     # first find the representative vector that is closest to the query vector, based on dot product similarity
     distances = np.linalg.norm(rep_vector - query_vector, axis=1) #this is based on L2
     #print("distance to the rep vectors: ", distances)
-    entry_distance = np.min(distances)
-    entry_offset = np.argmin(distances)
-    entry_idx = reps[entry_offset]
+
+    # find the two closest representatives
+    # first sort the indices based on the distance
+    # then select the first two indices
+
+    sorted_indices = np.argsort(distances)
+    visited = set()
+    explored_graph = {}
+    explored_vector = {}
+
+    for i in range(1):
+    #entry_distance = np.min(distances)
+    #entry_distance 
+    #entry_offset = np.argmin(distances)
+        entry_offset = sorted_indices[i]
+        entry_idx = reps[entry_offset]
+        entry_distance = distances[entry_offset]
 
     # compare rep_graph[entry_offset] and graph[entry_idx]
     #for i in range(len(rep_graph[entry_offset])):
@@ -162,11 +176,13 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
     #        print("rep_graph: ", rep_graph[entry_offset], "graph: ", graph[entry_idx])
     #        break
 
-    visited = set([entry_idx])
-    # add the vector of entry_idx to the explored_vector map
-    explored_vector = {entry_idx: rep_vector[entry_offset]}
+        visited.add(entry_idx)
+        # add the vector of entry_idx to the explored_vector map
+        explored_vector[entry_idx] = rep_vector[entry_offset]
+        explored_graph[entry_idx] = rep_graph[entry_offset]
+    #explored_vector = {entry_idx: rep_vector[entry_offset]}
     # add the neighbors of the entry_idx to the to_be_explored list
-    explored_graph = {entry_idx: rep_graph[entry_offset]}
+    #explored_graph = {entry_idx: rep_graph[entry_offset]}
 
     # the to_be_explored list is a priority queue containing tuples
     # each tuples contains the distance to the query_vector and the index
@@ -334,7 +350,7 @@ max_query_num = 1000
 
 # clock the total time
 start = time.time()
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 8)
+output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 15)
 end = time.time()
 print("Total Time: ", end - start)
 print("Average Time: ", (end - start)/max_query_num)
