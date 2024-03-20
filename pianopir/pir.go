@@ -174,14 +174,14 @@ func NewPianoPIRClient(config *PianoPIRConfig) *PianoPIRClient {
 // return the local storage in bytes
 func (c *PianoPIRClient) LocalStorageSize() float64 {
 	localStorageSize := float64(0)
-	localStorageSize = localStorageSize + float64(c.primaryHintNum*4)                       // the primary hint short tag
-	localStorageSize = localStorageSize + float64(c.primaryHintNum*c.config.DBEntryByteNum) // the primary parity
-	localStorageSize = localStorageSize + float64(c.primaryHintNum*4)                       // the primary program point
-	totalBackupHintNum := c.config.SetSize * c.maxQueryPerChunk
-	localStorageSize = localStorageSize + float64(totalBackupHintNum*4)                       // the replacement indices
-	localStorageSize = localStorageSize + float64(totalBackupHintNum*c.config.DBEntryByteNum) // the replacement values
-	localStorageSize = localStorageSize + float64(totalBackupHintNum*4)                       // the backup short tag
-	localStorageSize = localStorageSize + float64(totalBackupHintNum*c.config.DBEntryByteNum) // the backup parities
+	localStorageSize = localStorageSize + float64(c.primaryHintNum)*4                                // the primary hint short tag
+	localStorageSize = localStorageSize + float64(c.primaryHintNum)*float64(c.config.DBEntryByteNum) // the primary parity
+	localStorageSize = localStorageSize + float64(c.primaryHintNum)*4                                // the primary program point
+	totalBackupHintNum := float64(c.config.SetSize) * float64(c.maxQueryPerChunk)
+	localStorageSize = localStorageSize + float64(totalBackupHintNum)*4                                // the replacement indices
+	localStorageSize = localStorageSize + float64(totalBackupHintNum)*float64(c.config.DBEntryByteNum) // the replacement values
+	localStorageSize = localStorageSize + float64(totalBackupHintNum)*4                                // the backup short tag
+	localStorageSize = localStorageSize + float64(totalBackupHintNum)*float64(c.config.DBEntryByteNum) // the backup parities
 
 	return localStorageSize
 }

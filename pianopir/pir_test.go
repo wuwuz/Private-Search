@@ -175,7 +175,8 @@ func TestBatchPIRPerf(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	DBSize := uint32(3201821)
+	//DBSize := uint32(3201821)
+	DBSize := uint32(30000000)
 	//DBSize := uint32(300000)
 	DBEntrySize := uint32(112)
 	BatchSize := uint32(32)

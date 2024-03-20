@@ -83,7 +83,7 @@ func NewSimpleBatchPianoPIR(DBSize uint32, DBEntryByteNum uint32, BatchSize uint
 
 func (p *SimpleBatchPianoPIR) PrintInfo() {
 	fmt.Printf("-----------BatchPIR config --------\n")
-	DBSizeInBytes := p.config.DBSize * p.config.DBEntryByteNum
+	DBSizeInBytes := float64(p.config.DBSize) * float64(p.config.DBEntryByteNum)
 	fmt.Printf("DB size in MB = %v\n", DBSizeInBytes/1024/1024)
 	fmt.Printf("DBSize: %v, DBEntryByteNum: %v, BatchSize: %v, PartitionNum: %v, PartitionSize: %v, ThreadNum: %v, FailureProbLog2: %v\n", p.config.DBSize, p.config.DBEntryByteNum, p.config.BatchSize, p.config.PartitionNum, p.config.PartitionSize, p.config.ThreadNum, p.config.FailureProbLog2)
 	maxQuery := p.subPIR[0].client.MaxQueryNum / QueryPerPartition
