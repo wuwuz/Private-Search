@@ -18,8 +18,8 @@ import (
 var matrix [][]float32
 var graph [][]uint32
 var rawDB []uint64
-var DBSize uint32
-var DBEntryByteNum uint32
+var DBSize uint64
+var DBEntryByteNum uint64
 var vectorSize int
 var numNeighbors int
 var PIR *pianopir.SimpleBatchPianoPIR
@@ -89,31 +89,31 @@ func loadGraph(filename string) error {
 // makeRawDB converts the matrix and graph into a rawDB
 // we concatenate each row of the matrix and also the correspoding neighbor lists
 // and we
-func MakeRawDB(matrix [][]float32, graph [][]uint32) (uint32, uint32, []uint64) {
+func MakeRawDB(matrix [][]float32, graph [][]uint32) (uint64, uint64, []uint64) {
 	// let's first compute the DBEntryByteNum
-	vectorSize := len(matrix[0])
-	numNeighbors := len(graph[0])
+	vectorSize := uint64(len(matrix[0]))
+	numNeighbors := uint64(len(graph[0]))
 
 	DBEntryByteNum := vectorSize*4 + numNeighbors*4
-	DBSize := len(matrix)
+	DBSize := uint64(len(matrix))
 
 	fmt.Println("DBEntryByteNum: ", DBEntryByteNum)
 	fmt.Println("DBSize: ", DBSize)
 
 	rawDB := make([]uint64, DBSize*DBEntryByteNum/8)
 
-	for i := 0; i < DBSize; i++ {
+	for i := uint64(0); i < DBSize; i++ {
 		// we first convert the matrix row to a byte slice
 		matrixRow := matrix[i]
 		matrixRowBytes := make([]byte, vectorSize*4)
-		for j := 0; j < vectorSize; j++ {
+		for j := uint64(0); j < vectorSize; j++ {
 			binary.LittleEndian.PutUint32(matrixRowBytes[j*4:], math.Float32bits(matrixRow[j]))
 		}
 
 		// we also convert the graph row to a byte slice
 		neighbors := graph[i]
 		neighborsBytes := make([]byte, numNeighbors*4)
-		for j := 0; j < numNeighbors; j++ {
+		for j := uint64(0); j < numNeighbors; j++ {
 			binary.LittleEndian.PutUint32(neighborsBytes[j*4:], neighbors[j])
 		}
 
@@ -122,7 +122,7 @@ func MakeRawDB(matrix [][]float32, graph [][]uint32) (uint32, uint32, []uint64) 
 
 		// then we convert the byte slice to a uint64 slice
 		entry := make([]uint64, DBEntryByteNum/8)
-		for j := 0; j < DBEntryByteNum/8; j++ {
+		for j := uint64(0); j < DBEntryByteNum/8; j++ {
 			entry[j] = binary.LittleEndian.Uint64(entryBytes[j*8:])
 		}
 
@@ -130,7 +130,7 @@ func MakeRawDB(matrix [][]float32, graph [][]uint32) (uint32, uint32, []uint64) 
 		copy(rawDB[i*DBEntryByteNum/8:], entry)
 	}
 
-	return uint32(DBSize), uint32(DBEntryByteNum), rawDB
+	return uint64(DBSize), uint64(DBEntryByteNum), rawDB
 }
 
 func ConvertFromRawDB(vectorSize int, numNeighbors int, entry []uint64) ([]float32, []uint32) {
@@ -162,14 +162,14 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	//fmt.Println("Querying for: ", rowIndexesStr)
 
 	// first we make a list storing all the indices
-	var indices []uint32
+	var indices []uint64
 	for _, rowIndexStr := range rowIndexesStr {
 		rowIndex, err := strconv.Atoi(rowIndexStr)
 		if err != nil || rowIndex < 0 || rowIndex >= len(matrix) {
 			http.Error(w, "Row index out of range or invalid", http.StatusBadRequest)
 			return
 		}
-		indices = append(indices, uint32(rowIndex))
+		indices = append(indices, uint64(rowIndex))
 	}
 
 	// then we make a batch query
@@ -236,7 +236,7 @@ func main() {
 	numNeighbors = len(graph[0])
 
 	DBSize, DBEntryByteNum, rawDB = MakeRawDB(matrix, graph)
-	PIR = pianopir.NewSimpleBatchPianoPIR(DBSize, DBEntryByteNum, uint32(len(graph[0])), rawDB, 8)
+	PIR = pianopir.NewSimpleBatchPianoPIR(DBSize, DBEntryByteNum, uint64(len(graph[0])), rawDB, 8)
 	PIR.Preprocessing()
 	log.Printf("PIR config: %v\n", PIR.Config())
 	log.Printf("PIR local storage size: %v MB\n", PIR.LocalStorageSize()/1024/1024)

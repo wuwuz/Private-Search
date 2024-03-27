@@ -154,12 +154,14 @@ func PRFEval4(key *PrfKey128, x uint64) uint64 {
 	return binary.LittleEndian.Uint64(dsc)
 }
 
-func PRFEvalWithLongKeyAndTag(longKey []uint32, tag uint32, x uint64) uint32 {
+func PRFEvalWithLongKeyAndTag(longKey []uint32, tag uint64, x uint64) uint64 {
 	var src = make([]byte, 16)
 	var dsc = make([]byte, 16)
-	binary.LittleEndian.PutUint64(src, (uint64(tag)<<35)+x)
+
+	// the tag has to be less than 2^29
+	binary.LittleEndian.PutUint64(src, (tag<<35)+x)
 	aes128MMO(&longKey[0], &dsc[0], &src[0])
-	return binary.LittleEndian.Uint32(dsc)
+	return binary.LittleEndian.Uint64(dsc)
 }
 
 func GetLongKey(key *PrfKey128) []uint32 {

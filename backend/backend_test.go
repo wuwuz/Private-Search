@@ -29,7 +29,7 @@ func TestConvert(t *testing.T) {
 	_, DBEntryByteNum, rawDB := MakeRawDB(matrix, graph)
 
 	// now we check if the conversion is correct, row by row
-	for i := uint32(0); i < 20; i++ {
+	for i := uint64(0); i < 20; i++ {
 		rowDBSlice := rawDB[i*DBEntryByteNum/8 : (i+1)*DBEntryByteNum/8]
 		vector, neighbors := ConvertFromRawDB(192, 32, rowDBSlice)
 

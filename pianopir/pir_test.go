@@ -10,14 +10,14 @@ func TestPIRBasic(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	DBSize := uint32(18750)
-	DBEntrySize := uint32(4)
+	DBSize := uint64(18750)
+	DBEntrySize := uint64(4)
 	seed := time.Now().UnixNano()
 	rng := rand.New(rand.NewSource(seed))
 
 	rawDB := make([]uint64, DBEntrySize*DBSize)
-	for i := uint32(0); i < DBSize; i++ {
-		for j := uint32(0); j < DBEntrySize; j++ {
+	for i := uint64(0); i < DBSize; i++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			rawDB[i*DBEntrySize+j] = rng.Uint64()
 		}
 	}
@@ -36,13 +36,13 @@ func TestPIRBasic(t *testing.T) {
 
 	// make 1000 random queries
 	for i := 0; i < int(maxQueryNum); i++ {
-		idx := rand.Uint32() % DBSize
+		idx := rand.Uint64() % DBSize
 		query, err := PIR.Query(idx, true)
 		if err != nil {
 			t.Errorf("PIR.Query(%v) failed: %v", idx, err)
 		}
 
-		for j := uint32(0); j < DBEntrySize; j++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			if query[j] != rawDB[idx*DBEntrySize+j] {
 				t.Errorf("query[%v] = %v; want %v", idx, query[j], rawDB[idx*DBEntrySize+j])
 			}
@@ -61,17 +61,17 @@ func TestBatchPIRBasic(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	DBSize := uint32(1000000)
-	DBEntrySize := uint32(16)
-	BatchSize := uint32(32)
+	DBSize := uint64(1000000)
+	DBEntrySize := uint64(16)
+	BatchSize := uint64(32)
 
 	// a seed that's depending on the current time
 	//seed := time.Now().UnixNano()
 	//rng := rand.New(rand.NewSource(seed))
 
 	rawDB := make([]uint64, DBEntrySize*DBSize)
-	for i := uint32(0); i < DBSize; i++ {
-		for j := uint32(0); j < DBEntrySize; j++ {
+	for i := uint64(0); i < DBSize; i++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			rawDB[i*DBEntrySize+j] = uint64(i) //rng.Uint64()
 		}
 	}
@@ -86,14 +86,14 @@ func TestBatchPIRBasic(t *testing.T) {
 
 	// make a single batch query
 	// for each partition, make PartitionQueryNum queries
-	batchQuery := make([]uint32, 0, BatchSize)
+	batchQuery := make([]uint64, 0, BatchSize)
 
-	for i := uint32(0); i < config.PartitionNum; i++ {
+	for i := uint64(0); i < config.PartitionNum; i++ {
 		start := i * config.PartitionSize
 		end := min((i+1)*config.PartitionSize, DBSize)
 
-		for j := uint32(0); j < QueryPerPartition-1; j++ {
-			offset := rand.Uint32() % (end - start)
+		for j := uint64(0); j < QueryPerPartition-1; j++ {
+			offset := rand.Uint64() % (end - start)
 			// append the query to the batch query
 			batchQuery = append(batchQuery, start+offset)
 		}
@@ -111,7 +111,7 @@ func TestBatchPIRBasic(t *testing.T) {
 	for i := 0; i < len(batchQuery); i++ {
 		idx := batchQuery[i]
 		query := responses[i]
-		for j := uint32(0); j < DBEntrySize; j++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			if query[j] != rawDB[idx*DBEntrySize+j] {
 				t.Errorf("query[%v] = %v; want %v", idx, query[j], rawDB[idx*DBEntrySize+j])
 			}
@@ -124,10 +124,10 @@ func TestBatchPIRBasic(t *testing.T) {
 	// it only has queries in the first partition
 	// so only the first PartitionQueryNum queries should be correct
 
-	querySet := make(map[uint32]bool)
-	batchQuery = make([]uint32, 0, BatchSize)
-	for i := uint32(0); i < BatchSize; i++ {
-		idx := rand.Uint32() % config.PartitionSize
+	querySet := make(map[uint64]bool)
+	batchQuery = make([]uint64, 0, BatchSize)
+	for i := uint64(0); i < BatchSize; i++ {
+		idx := rand.Uint64() % config.PartitionSize
 		if _, ok := querySet[idx]; ok {
 			// resample the index
 			i--
@@ -149,20 +149,20 @@ func TestBatchPIRBasic(t *testing.T) {
 		t.Errorf("PIR.Query(%v) failed: %v", batchQuery, err)
 	}
 
-	for i := uint32(0); i < BatchSize; i++ {
+	for i := uint64(0); i < BatchSize; i++ {
 		idx := batchQuery[i]
 		query := responses[i]
 
 		if i < QueryPerPartition {
 			// check if the first PartitionQueryNum queries are correct
-			for j := uint32(0); j < DBEntrySize; j++ {
+			for j := uint64(0); j < DBEntrySize; j++ {
 				if query[j] != rawDB[idx*DBEntrySize+j] {
 					t.Errorf("query[%v] = %v; want %v", idx, query[j], rawDB[idx*DBEntrySize+j])
 				}
 			}
 		} else {
 			// otherwise check if they are all zeros
-			for j := uint32(0); j < DBEntrySize; j++ {
+			for j := uint64(0); j < DBEntrySize; j++ {
 				if query[j] != 0 {
 					t.Errorf("query[%v] = %v; want 0", idx, query[j])
 				}
@@ -175,19 +175,19 @@ func TestBatchPIRPerf(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	//DBSize := uint32(3201821)
-	DBSize := uint32(30000000)
-	//DBSize := uint32(300000)
-	DBEntrySize := uint32(112)
-	BatchSize := uint32(32)
+	//DBSize := uint64(3201821)
+	DBSize := uint64(100000000)
+	//DBSize := uint64(300000)
+	DBEntrySize := uint64(112)
+	BatchSize := uint64(32)
 
 	// a seed that's depending on the current time
 	seed := time.Now().UnixNano()
 	rng := rand.New(rand.NewSource(seed))
 
 	rawDB := make([]uint64, DBEntrySize*DBSize)
-	for i := uint32(0); i < DBSize; i++ {
-		for j := uint32(0); j < DBEntrySize; j++ {
+	for i := uint64(0); i < DBSize; i++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			rawDB[i*DBEntrySize+j] = rng.Uint64()
 		}
 	}
@@ -216,16 +216,16 @@ func TestBatchPIRPerf(t *testing.T) {
 
 	start = time.Now()
 	for i := 0; i < queryNum*step; i++ {
-		batch := make([]uint32, 0, BatchSize)
+		batch := make([]uint64, 0, BatchSize)
 		for j := 0; j < int(BatchSize); j++ {
-			batch = append(batch, rng.Uint32()%DBSize)
+			batch = append(batch, rng.Uint64()%DBSize)
 		}
 		response, err := PIR.Query(batch)
 		if err != nil {
 			t.Errorf("PIR.Query(%v) failed: %v", batch, err)
 		}
 		//we check the first response, either it's all zeros, or it's correct
-		for j := uint32(0); j < DBEntrySize; j++ {
+		for j := uint64(0); j < DBEntrySize; j++ {
 			if response[0][j] != 0 && response[0][j] != rawDB[batch[0]*DBEntrySize+j] {
 				t.Errorf("response[0][%v] = %v; want %v", j, response[0][j], rawDB[batch[0]*DBEntrySize+j])
 			}
@@ -302,11 +302,11 @@ func TestAESPerf(t *testing.T) {
 	longKey := GetLongKey((*PrfKey128)(&masterKey))
 
 	n := 1000000
-	tag := make([]uint32, n)
-	results := make([]uint32, n)
+	tag := make([]uint64, n)
+	results := make([]uint64, n)
 
 	for i := 0; i < n; i++ {
-		tag[i] = rng.Uint32()
+		tag[i] = rng.Uint64()
 		results[i] = 0
 	}
 

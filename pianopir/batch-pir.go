@@ -16,14 +16,14 @@ const (
 )
 
 type SimpleBatchPianoPIRConfig struct {
-	DBEntryByteNum  uint32 // the number of bytes in a DB entry
-	DBEntrySize     uint32 // the number of uint64 in a DB entry
-	DBSize          uint32
-	BatchSize       uint32
-	PartitionNum    uint32
-	PartitionSize   uint32
-	ThreadNum       uint32
-	FailureProbLog2 uint32
+	DBEntryByteNum  uint64 // the number of bytes in a DB entry
+	DBEntrySize     uint64 // the number of uint64 in a DB entry
+	DBSize          uint64
+	BatchSize       uint64
+	PartitionNum    uint64
+	PartitionSize   uint64
+	ThreadNum       uint64
+	FailureProbLog2 uint64
 }
 
 // it's a simple batch PIR client
@@ -39,10 +39,10 @@ type SimpleBatchPianoPIRConfig struct {
 type SimpleBatchPianoPIR struct {
 	config           *SimpleBatchPianoPIRConfig
 	subPIR           []*PianoPIR
-	FinishedQueryNum uint32
+	FinishedQueryNum uint64
 }
 
-func NewSimpleBatchPianoPIR(DBSize uint32, DBEntryByteNum uint32, BatchSize uint32, rawDB []uint64, FailureProbLog2 uint32) *SimpleBatchPianoPIR {
+func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint64, rawDB []uint64, FailureProbLog2 uint64) *SimpleBatchPianoPIR {
 	DBEntrySize := DBEntryByteNum / 8
 	if len(rawDB) != int(DBSize*DBEntrySize) {
 		log.Fatalf("BatchPIR: len(rawDB) = %v; want %v", len(rawDB), DBSize*DBEntrySize)
@@ -66,7 +66,7 @@ func NewSimpleBatchPianoPIR(DBSize uint32, DBEntryByteNum uint32, BatchSize uint
 
 	subPIR := make([]*PianoPIR, PartitionNum)
 
-	for i := uint32(0); i < PartitionNum; i++ {
+	for i := uint64(0); i < PartitionNum; i++ {
 		start := i * PartitionSize
 		end := min((i+1)*PartitionSize, DBSize)
 		// print start and end
@@ -111,8 +111,8 @@ func (p *SimpleBatchPianoPIR) Preprocessing() {
 
 	perThreadPartitionNum := (p.config.PartitionNum + p.config.ThreadNum - 1) / p.config.ThreadNum
 
-	for tid := uint32(0); tid < p.config.ThreadNum; tid++ {
-		go func(tid uint32) {
+	for tid := uint64(0); tid < p.config.ThreadNum; tid++ {
+		go func(tid uint64) {
 			start := tid * perThreadPartitionNum
 			end := min((tid+1)*perThreadPartitionNum, p.config.PartitionNum)
 			//log.Printf("Thread %v preprocessing partitions [%v, %v)\n", tid, start, end)
@@ -130,9 +130,9 @@ func (p *SimpleBatchPianoPIR) Preprocessing() {
 	log.Printf("Preprocessing time = %v\n", endTime.Sub(startTime))
 }
 
-func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
+func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
 	// first arrange the queries into the partitions
-	partitionQueries := make([][]uint32, p.config.PartitionNum)
+	partitionQueries := make([][]uint64, p.config.PartitionNum)
 	for i := 0; i < len(idx); i++ {
 		partitionIdx := idx[i] / p.config.PartitionSize
 		partitionQueries[partitionIdx] = append(partitionQueries[partitionIdx], idx[i])
@@ -141,21 +141,21 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
 	//fmt.Println("partitionQueries: ", partitionQueries)
 
 	// we make a map from index to their responses
-	responses := make(map[uint32][]uint64)
+	responses := make(map[uint64][]uint64)
 
-	for i := uint32(0); i < p.config.PartitionNum; i++ {
+	for i := uint64(0); i < p.config.PartitionNum; i++ {
 		//start := i * p.config.PartitionSize
 		//end := min((i+1)*p.config.PartitionSize, p.config.DBSize)
 
 		// case 1: if there are not enough queries, just pad with random indices in the partition
 		if len(partitionQueries[i]) < QueryPerPartition {
-			for j := uint32(len(partitionQueries[i])); j < QueryPerPartition; j++ {
+			for j := uint64(len(partitionQueries[i])); j < QueryPerPartition; j++ {
 				partitionQueries[i] = append(partitionQueries[i], DefaultValue)
 			}
 		}
 
 		// now we make QueryPerPartition queries to the sub PIR
-		for j := uint32(0); j < QueryPerPartition; j++ {
+		for j := uint64(0); j < QueryPerPartition; j++ {
 			if partitionQueries[i][j] == DefaultValue {
 				_, _ = p.subPIR[i].Query(0, false) // just make a dummy query
 			} else {
@@ -185,7 +185,7 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
 		} else {
 			// otherwise just make a zero response
 			ret[i] = make([]uint64, p.config.DBEntrySize)
-			for j := uint32(0); j < p.config.DBEntrySize; j++ {
+			for j := uint64(0); j < p.config.DBEntrySize; j++ {
 				ret[i][j] = 0
 			}
 		}
@@ -207,7 +207,7 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint32) ([][]uint64, error) {
 
 func (p *SimpleBatchPianoPIR) LocalStorageSize() float64 {
 	ret := float64(0)
-	for i := uint32(0); i < p.config.PartitionNum; i++ {
+	for i := uint64(0); i < p.config.PartitionNum; i++ {
 		ret += p.subPIR[i].LocalStorageSize()
 	}
 	return ret
@@ -215,7 +215,7 @@ func (p *SimpleBatchPianoPIR) LocalStorageSize() float64 {
 
 func (p *SimpleBatchPianoPIR) CommCostPerQuery() float64 {
 	ret := float64(0)
-	for i := uint32(0); i < p.config.PartitionNum; i++ {
+	for i := uint64(0); i < p.config.PartitionNum; i++ {
 		ret += p.subPIR[i].CommCostPerQuery()
 	}
 	return ret
