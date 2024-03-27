@@ -5,9 +5,9 @@ import heapq
 import os
 import requests
 
-from cuml.decomposition import PCA as cuPCA
-from cuml.decomposition import IncrementalPCA as cuIPCA
-import cudf
+#from cuml.decomposition import PCA as cuPCA
+#from cuml.decomposition import IncrementalPCA as cuIPCA
+#import cudf
 import pickle
 import time
 
@@ -68,10 +68,11 @@ rep_graph = np.load(rep_graph_file)
 
 
 # load the PCA model
-with open('ipca_msmarco.pkl', 'rb') as f:
-    ipca = pickle.load(f)
+#with open('ipca_msmarco.pkl', 'rb') as f:
+#    ipca = pickle.load(f)
 
 # check if the number of components in the PCA model is the same as the number of dimensions in the embeddings
+'''
 if rep_vector.shape[1] == ipca.n_components:
     # transform the query embeddings
     print("Transforming query embeddings with PCA model...")
@@ -80,12 +81,13 @@ if rep_vector.shape[1] == ipca.n_components:
 else:
     DIM_REDUCED = False
     print("No need to transform")
+'''
 
 def generate_query_embeddings(sentences):
     tmp = model.encode(sentences)
-    if DIM_REDUCED:
+    #if DIM_REDUCED:
         #print("Transforming query embeddings with PCA model...")
-        tmp = ipca.transform(tmp)
+    #    tmp = ipca.transform(tmp)
     return tmp
     #return model.encode(sentences)
 
@@ -350,7 +352,7 @@ max_query_num = 1000
 
 # clock the total time
 start = time.time()
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 15)
+output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 10)
 end = time.time()
 print("Total Time: ", end - start)
 print("Average Time: ", (end - start)/max_query_num)
