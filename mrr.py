@@ -47,8 +47,8 @@ def compute_mrr(result_dict, real_dict):
                 num_ranked += 1
                 mrr += 1.0 / float(i + 1)
         tmp += 1
-    print("Num ranked = %d" % num_ranked)
-    print("Total = %d" % len(result_dict))
+    print("Ranked / Total = %d / %d" % (num_ranked, tmp))
+    #print("Total = %d" % len(result_dict))
     return mrr / float(len(result_dict))
 
 def main():

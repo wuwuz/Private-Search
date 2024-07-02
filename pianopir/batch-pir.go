@@ -13,6 +13,7 @@ const (
 	RealQueryPerPartition = 2
 	QueryPerPartition     = 2
 	DefaultValue          = 0xdeadbeef
+	ThreadNum             = 1
 )
 
 type SimpleBatchPianoPIRConfig struct {
@@ -27,7 +28,7 @@ type SimpleBatchPianoPIRConfig struct {
 }
 
 // it's a simple batch PIR client
-// it does not guaranee to output all the queries
+// it does not guarantee to output all the queries
 // the strategy is simple
 // 1. divide the DB into BatchSize / K partitions
 // 2. for each partition, create a sub PIR class
@@ -37,9 +38,17 @@ type SimpleBatchPianoPIRConfig struct {
 // 4. It will output the queries in the order of the partitions
 
 type SimpleBatchPianoPIR struct {
-	config           *SimpleBatchPianoPIRConfig
-	subPIR           []*PianoPIR
-	FinishedQueryNum uint64
+	config *SimpleBatchPianoPIRConfig
+	subPIR []*PianoPIR
+
+	// the following are stats
+
+	FinishedBatchNum        uint64
+	SupportBatchNum         uint64
+	localStorage            uint64  // bytes
+	preprocessingTime       float64 // seconds
+	commCostPerBatchOnline  uint64  // bytes
+	commCostPerBatchOffline uint64  // bytes
 }
 
 func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint64, rawDB []uint64, FailureProbLog2 uint64) *SimpleBatchPianoPIR {
@@ -60,7 +69,7 @@ func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint
 		BatchSize:       BatchSize,
 		PartitionNum:    PartitionNum,
 		PartitionSize:   PartitionSize,
-		ThreadNum:       8,
+		ThreadNum:       ThreadNum,
 		FailureProbLog2: FailureProbLog2,
 	}
 
@@ -77,7 +86,7 @@ func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint
 	return &SimpleBatchPianoPIR{
 		config:           config,
 		subPIR:           subPIR,
-		FinishedQueryNum: 0,
+		FinishedBatchNum: 0,
 	}
 }
 
@@ -90,10 +99,19 @@ func (p *SimpleBatchPianoPIR) PrintInfo() {
 	fmt.Printf("max query num = %v\n", maxQuery)
 	fmt.Printf("max query per chunk = %v\n", p.subPIR[0].client.maxQueryPerChunk)
 	fmt.Printf("total storage = %v MB\n", p.LocalStorageSize()/1024/1024)
-	fmt.Printf("comm cost per query = %v KB\n", p.CommCostPerQuery()/1024)
+	fmt.Printf("comm cost per batch = %v KB\n", p.CommCostPerBatchOnline()/1024)
 	fmt.Printf("amortized preprocessing comm cost = %v KB\n", float64(DBSizeInBytes)/float64(maxQuery)/1024)
-	fmt.Printf("total amortized comm cost = %v KB\n", float64(DBSizeInBytes)/float64(maxQuery)/1024+p.CommCostPerQuery()/1024)
+	fmt.Printf("total amortized comm cost = %v KB\n", float64(DBSizeInBytes)/float64(maxQuery)/1024+float64(p.CommCostPerBatchOnline())/1024)
 	fmt.Printf("-----------------------------\n")
+}
+
+func (p *SimpleBatchPianoPIR) RecordStats(prepTime float64) {
+	p.preprocessingTime = prepTime
+	p.localStorage = uint64(p.LocalStorageSize())                 // bytes
+	p.commCostPerBatchOnline = uint64(p.CommCostPerBatchOnline()) // bytes
+	p.SupportBatchNum = p.subPIR[0].client.MaxQueryNum / QueryPerPartition
+	DBSizeInBytes := float64(p.config.DBSize) * float64(p.config.DBEntryByteNum)
+	p.commCostPerBatchOffline = uint64(float64(DBSizeInBytes) / float64(p.SupportBatchNum)) // bytes
 }
 
 func (p *SimpleBatchPianoPIR) Preprocessing() {
@@ -103,7 +121,7 @@ func (p *SimpleBatchPianoPIR) Preprocessing() {
 	// we need to clock the time
 
 	// we now use p.config.ThreadNum threads to do the preprocessing
-	p.FinishedQueryNum = 0
+	p.FinishedBatchNum = 0
 	startTime := time.Now()
 
 	var wg sync.WaitGroup
@@ -127,7 +145,21 @@ func (p *SimpleBatchPianoPIR) Preprocessing() {
 	wg.Wait()
 
 	endTime := time.Now()
+	prepTime := endTime.Sub(startTime).Seconds()
 	log.Printf("Preprocessing time = %v\n", endTime.Sub(startTime))
+
+	p.RecordStats(prepTime)
+}
+
+func (p *SimpleBatchPianoPIR) DummyPreprocessing() {
+	p.PrintInfo()
+	// directly initialize all subPIR
+	for i := uint64(0); i < p.config.PartitionNum; i++ {
+		p.subPIR[i].DummyPreprocessing()
+	}
+
+	log.Printf("Skipping Prep")
+	p.RecordStats(0)
 }
 
 func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
@@ -191,15 +223,13 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
 		}
 	}
 
-	//fmt.Println("finished query num", p.subPIR[0].client.FinishedQueryNum)
-
 	// now test if the subPIR has reached the max query num, redo the preprocessing
 	// -2 means we want to do the preprocessing before the last query
-	if p.FinishedQueryNum*QueryPerPartition >= p.subPIR[0].client.MaxQueryNum-2 {
-		fmt.Printf("Already reached the max query num %v, redo the preprocessing\n", p.FinishedQueryNum)
+	if p.FinishedBatchNum*QueryPerPartition >= p.subPIR[0].client.MaxQueryNum-2 {
+		fmt.Printf("Already reached the max query num %v, redo the preprocessing\n", p.FinishedBatchNum)
 		p.Preprocessing()
 	} else {
-		p.FinishedQueryNum += 1
+		p.FinishedBatchNum += 1
 	}
 
 	return ret, nil
@@ -213,12 +243,20 @@ func (p *SimpleBatchPianoPIR) LocalStorageSize() float64 {
 	return ret
 }
 
-func (p *SimpleBatchPianoPIR) CommCostPerQuery() float64 {
+func (p *SimpleBatchPianoPIR) CommCostPerBatchOnline() uint64 {
 	ret := float64(0)
 	for i := uint64(0); i < p.config.PartitionNum; i++ {
-		ret += p.subPIR[i].CommCostPerQuery()
+		ret += p.subPIR[i].CommCostPerQuery() * float64(QueryPerPartition)
 	}
-	return ret
+	return uint64(ret)
+}
+
+func (p *SimpleBatchPianoPIR) CommCostPerBatchOffline() uint64 {
+	return p.commCostPerBatchOffline
+}
+
+func (p *SimpleBatchPianoPIR) PreprocessingTime() float64 {
+	return p.preprocessingTime
 }
 
 func (p *SimpleBatchPianoPIR) Config() *SimpleBatchPianoPIRConfig {

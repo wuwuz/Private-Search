@@ -89,7 +89,8 @@ func (s *PianoPIRServer) PrivateQuery(offsets []uint32) ([]uint64, error) {
 
 // PianoPIRClient is the stateful client for PianoPIR
 type PianoPIRClient struct {
-	config *PianoPIRConfig
+	config   *PianoPIRConfig
+	skipPrep bool
 
 	// the master keys for the client
 	//rng       *rand.Rand
@@ -146,7 +147,8 @@ func NewPianoPIRClient(config *PianoPIRConfig) *PianoPIRClient {
 
 	masterKey = RandKey(rng)
 	return &PianoPIRClient{
-		config: config,
+		config:   config,
+		skipPrep: false, // default to false
 
 		//rng:       rng,
 		masterKey: masterKey,
@@ -264,6 +266,10 @@ func EntryXor(a []uint64, b []uint64, entrySize uint64) {
 
 func (c *PianoPIRClient) Preprocessing(rawDB []uint64) {
 	c.Initialization() // first clean everything
+	if c.skipPrep {
+		// only for debugging and benchmarking
+		return
+	}
 
 	//log.Printf("len(rawDB) %v\n", len(rawDB))
 	//if len(rawDB) < int(c.config.ChunkSize*c.config.SetSize*c.config.DBEntrySize) {
@@ -509,6 +515,11 @@ func NewPianoPIR(DBSize uint64, DBEntryByteNum uint64, rawDB []uint64, FailurePr
 
 func (p *PianoPIR) Preprocessing() {
 	p.client.Preprocessing(p.server.rawDB)
+}
+
+func (p *PianoPIR) DummyPreprocessing() {
+	p.client.Initialization()
+	p.client.skipPrep = true
 }
 
 func (p *PianoPIR) Query(idx uint64, realQuery bool) ([]uint64, error) {

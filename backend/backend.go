@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,10 +25,11 @@ var DBEntryByteNum uint64
 var vectorSize int
 var numNeighbors int
 var PIR *pianopir.SimpleBatchPianoPIR
+var skipPrep bool
 
 // embeddings file name
-const embeddingsFile = "msmarco_embeddings_reduced_permuted.txt"
-const graphFile = "graph_permuted.txt"
+const embeddingsFileDefault = "msmarco_embeddings_reduced_permuted.txt"
+const graphFileDefault = "graph_permuted.txt"
 
 //const embeddingsFile = "embeddings100.txt"
 //const graphFile = "graph100.txt"
@@ -59,6 +62,19 @@ func loadMatrix(filename string) error {
 	return scanner.Err()
 }
 
+func genRandomMatrix(num int, dim int) {
+	for i := 0; i < num; i++ {
+		var row []float32
+		for j := 0; j < dim; j++ {
+			row = append(row, rand.Float32())
+		}
+		matrix = append(matrix, row)
+	}
+
+	// output the shape of the matrix
+	fmt.Println("Matrix shape: ", len(matrix), len(matrix[0]))
+}
+
 func loadGraph(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -84,6 +100,24 @@ func loadGraph(filename string) error {
 	//output the shape of the graph
 	fmt.Println("Graph shape: ", len(graph), len(graph[0]))
 	return scanner.Err()
+}
+
+func genRandomGraph(num int, neigh int) {
+	for i := 0; i < num; i++ {
+		var row []uint32
+		for j := 0; j < neigh; j++ {
+			k := rand.Intn(num)
+			for k == i {
+				// no self loop
+				k = rand.Intn(num)
+			}
+			row = append(row, uint32(k))
+		}
+		graph = append(graph, row)
+	}
+
+	//output the shape of the graph
+	fmt.Println("Graph shape: ", len(graph), len(graph[0]))
 }
 
 // makeRawDB converts the matrix and graph into a rawDB
@@ -155,6 +189,54 @@ func ConvertFromRawDB(vectorSize int, numNeighbors int, entry []uint64) ([]float
 	return vector, neighbors
 }
 
+func nonPrivateQueryHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: implement non-private query handler
+	query := r.URL.Query()
+	rowIndexesStr := query["rowIndex"]
+
+	//fmt.Println("Querying for: ", rowIndexesStr)
+
+	// first we make a list storing all the indices
+	var indices []uint64
+	for _, rowIndexStr := range rowIndexesStr {
+		rowIndex, err := strconv.Atoi(rowIndexStr)
+		if err != nil || rowIndex < 0 || rowIndex >= len(matrix) {
+			http.Error(w, "Row index out of range or invalid", http.StatusBadRequest)
+			return
+		}
+		indices = append(indices, uint64(rowIndex))
+	}
+
+	vectors := make([][]float32, len(indices))
+	neighbors := make([][]uint32, len(indices))
+
+	for i := 0; i < len(indices); i++ {
+		vectors[i] = matrix[indices[i]]
+		neighbors[i] = graph[indices[i]]
+	}
+	var responseMap []map[string]interface{}
+	for i := 0; i < len(indices); i++ {
+		responseData := map[string]interface{}{
+			"matrixRow": vectors[i],
+			"neighbors": neighbors[i],
+		}
+		responseMap = append(responseMap, responseData)
+
+		if skipPrep {
+			// in this case we don't care about the correctness
+			continue
+		}
+	}
+
+	jsonResponse, err := json.Marshal(responseMap)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonResponse)
+}
+
 func queryHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	rowIndexesStr := query["rowIndex"]
@@ -193,6 +275,11 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		responseMap = append(responseMap, responseData)
 
+		if skipPrep {
+			// in this case we don't care about the correctness
+			continue
+		}
+
 		// verify the neighbors are correct
 		// there are two cases: either the neighbors are all zeros, or they match the original graph
 		allZeros := true
@@ -221,15 +308,77 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResponse)
 }
 
+// infoQueryHandler is a handler for the /info endpoint
+// when the client sends a GET request to /info, the server should return the following information in JSON format:
+// Database size,
+// Preprocessing computatinon time (per batch),
+// Local storage size,
+// Communication Cost (online per batch),
+// Communication Cost (maintenance per batch),
+func infoQueryHandler(w http.ResponseWriter, r *http.Request) {
+
+	info := map[string]interface{}{
+		"DBSize":      DBSize * DBEntryByteNum,
+		"PrepTime":    PIR.PreprocessingTime(),
+		"Storage":     PIR.LocalStorageSize(),
+		"OnlineComm":  PIR.CommCostPerBatchOnline(),
+		"OfflineComm": PIR.CommCostPerBatchOffline(),
+	}
+
+	jsonResponse, err := json.Marshal(info)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonResponse)
+
+}
+
 func main() {
 
-	err := loadMatrix(embeddingsFile)
-	if err != nil {
-		panic(err)
+	// If the file is called with argument --synthetic, then we will run the synthetic test
+	// If the file is called with argument --real, then we will run the real test
+	syntheticTest := flag.Bool("synthetic", false, "run synthetic test")
+	realTest := flag.Bool("real", false, "run real test")
+	skipPreprocessing := flag.Bool("skip", false, "skip preprocessing")
+	// For real testing:
+	// Add an input parameter --embfile to specify the embeddings file, with a default value
+	// Add an input parameter --graphfile to specify the graph file, with a default value
+	embeddingsFile := flag.String("embfile", embeddingsFileDefault, "embeddings file")
+	graphFile := flag.String("graphfile", graphFileDefault, "graph file")
+	// For synthetic testing:
+	// Add an input parameter -n to specify the number of vectors, default to 1000000
+	// Add an input parameter -d to specify the dimension of the vectors, default to 192
+	// Add an input parameter -m to specify the number of neighbors, default to 32
+	num := flag.Int("n", 1000000, "number of vectors")
+	dim := flag.Int("d", 192, "dimension of the vectors")
+	neigh := flag.Int("m", 32, "number of neighbors")
+
+	flag.Parse()
+
+	skipPrep = *skipPreprocessing
+
+	if *realTest {
+		log.Printf("Loading embeddings from %v and graph from %v\n", *embeddingsFile, *graphFile)
+		err := loadMatrix(*embeddingsFile)
+		if err != nil {
+			panic(err)
+		}
+		err = loadGraph(*graphFile)
+		if err != nil {
+			panic(err)
+		}
 	}
-	err = loadGraph(graphFile)
-	if err != nil {
-		panic(err)
+
+	if *syntheticTest {
+		log.Printf("Generating random matrix and graph with %v vectors, %v dimensions, %v neighbors\n", *num, *dim, *neigh)
+		genRandomMatrix(*num, *dim)
+		genRandomGraph(*num, *neigh)
+	}
+
+	if len(matrix) == 0 || len(graph) == 0 {
+		panic("No matrix or graph loaded")
 	}
 
 	vectorSize = len(matrix[0])
@@ -237,11 +386,18 @@ func main() {
 
 	DBSize, DBEntryByteNum, rawDB = MakeRawDB(matrix, graph)
 	PIR = pianopir.NewSimpleBatchPianoPIR(DBSize, DBEntryByteNum, uint64(len(graph[0])), rawDB, 8)
-	PIR.Preprocessing()
+
+	if skipPrep {
+		PIR.DummyPreprocessing()
+	} else {
+		PIR.Preprocessing()
+	}
 	log.Printf("PIR config: %v\n", PIR.Config())
 	log.Printf("PIR local storage size: %v MB\n", PIR.LocalStorageSize()/1024/1024)
 
 	http.HandleFunc("/query", queryHandler)
+	http.HandleFunc("/info", infoQueryHandler)
+	http.HandleFunc("/nonprivatequery", nonPrivateQueryHandler)
 	fmt.Println("Server started on :8080")
 	http.ListenAndServe(":8080", nil)
 }

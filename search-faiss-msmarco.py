@@ -69,7 +69,7 @@ def read_queries(filepath):
             queries.append((question_id, sentence))
     return queries
 
-def output_results_to_file(queries, query_embeddings, index, model, doc_ids, output_filepath, k=10):
+def output_results_to_file(queries, query_embeddings, index, model, doc_ids, output_filepath, k=100):
     """
     Process each query, generate embeddings, query the FAISS index, and output the results to a file.
     """

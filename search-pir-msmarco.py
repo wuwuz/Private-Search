@@ -10,6 +10,7 @@ import requests
 #import cudf
 import pickle
 import time
+import subprocess
 
 CLUSTER_NUM = 4 * 32 * 10
 #CLUSTER_NUM = 100
@@ -91,6 +92,31 @@ def generate_query_embeddings(sentences):
     return tmp
     #return model.encode(sentences)
 
+def query_PIR_info():
+    response = requests.get('http://localhost:8080/info')
+    if response.status_code == 200:
+        data = response.json()
+
+        DBSize = data['DBSize']
+        PrepTime = data['PrepTime']
+        Storage = data['Storage']
+        OnlineComm = data['OnlineComm']
+        OfflineComm = data['OfflineComm']
+
+        print("-----------------------")
+        print("PIR Info: ")
+        print("DBSize (MB): ", DBSize / 1024 / 1024)
+        print("PrepTime (seconds): ", PrepTime)  
+        print("Storage: (MB)", Storage / 1024 / 1024)
+        print("OnlineCommPerBatch (KB): ", OnlineComm / 1024)
+        print("OfflineCommPerBatch (KB): ", OfflineComm / 1024)
+        print("-----------------------")
+
+        # return a tuple containing the PIR info
+        return (DBSize, PrepTime, Storage, OnlineComm, OfflineComm)
+    else:
+        print("Error:", response.status_code)
+
 
 class VertexInfo:
     # a list containing the indices of the neighbors of the vertex
@@ -147,12 +173,22 @@ def query_vertex_info(indices, explored_graph, explored_vector):
         print("Error:", response.status_code)
         return None
 
-def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_id = None):
+
+
+# query_vector: the query vector
+# k: The number of nearest neighbors to return
+# step: The total rounds of exploration 
+# parallel_exploration: The number of parallel vertices to explore in each round
+# hidden_id: Only used for testing when search an existing vector in the database. 
+#            Used to test the efficiency of the search algorithm. 
+#            The earlier we can find the hidden_id, the more efficient the search algorithm is.
+
+def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, parallel_exploration = 1, hidden_id = None):
     hit_step = 99999
 
     # first find the representative vector that is closest to the query vector, based on dot product similarity
     distances = np.linalg.norm(rep_vector - query_vector, axis=1) #this is based on L2
-    #print("distance to the rep vectors: ", distances)
+    #print("distance to the rep vectors: ", distan
 
     # find the two closest representatives
     # first sort the indices based on the distance
@@ -200,7 +236,9 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
         #print("Step: ", i)
         #print("to_be_explored: ", to_be_explored)
         #print("graph[to_be_explored]: ", graph[to_be_explored])
-        _, current_idx = heapq.heappop(to_be_explored)
+        dist, current_idx = heapq.heappop(to_be_explored)
+        print("current_idx: ", current_idx)
+        print("current dist square", dist * dist)
         #print("in step ", i, "current_idx: ", current_idx, "current_neighbors size", len(explored_graph[current_idx]))
         # let neighbors be 
         current_neighbors = explored_graph[current_idx]
@@ -210,7 +248,11 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, hidden_
         vertex_info = query_vertex_info(current_neighbors, explored_graph, explored_vector) # TODO: optimize it so that repeated queries are not made
 
 
-        if len(to_be_explored) > 0:
+        for j in range(parallel_exploration - 1):
+            
+            if len(to_be_explored) == 0:  # there's nothing to be explored.
+                break
+
             _, current_idx_2 = heapq.heappop(to_be_explored)
             current_neighbors_2 = explored_graph[current_idx_2]
 
@@ -291,7 +333,7 @@ def read_queries(filepath):
             queries.append((question_id, sentence))
     return queries
 
-def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, k=10, step = 20):
+def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, k=10, step = 20, parallel_exploration = 1):
     """
     Process each query, generate embeddings, make the query and output the results to a file.
     """
@@ -305,7 +347,9 @@ def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, 
         for question_id, sentence in queries:
             #query_embedding = model.encode([sentence])  # Note: [sentence] to keep input as batch
             #distances, indices = query_index(sentence, k)
-            distances, indices, _ = find_approximate_nearest_neighbors(query_embeddings[t], k, step = step, hidden_id = None)
+            distances, indices, _ = find_approximate_nearest_neighbors(query_embeddings[t], k, step = step, 
+                                                                       parallel_exploration=parallel_exploration,
+                                                                       hidden_id = None)
             outfile.write(f"Query: {question_id} {sentence}\n")
             for i in range(len(indices)):    
                 doc_id = doc_ids[indices[i]]
@@ -328,10 +372,45 @@ def output_results_to_file(queries, query_embeddings, doc_ids, output_filepath, 
 #try_query = query_vertex_info([4, 5, 6, 7], {}, {})
 #exit()
 
+def generate_report(report_file_name, result_file_name, query_num, k, step, parallel_exploration, rtt, total_time):
+
+    (DBSize, PrepTime, Storage, OnlineComm, OfflineComm) = query_PIR_info()
+
+    # oepn the report file in appending mode
+    with open(report_file_name, 'a') as file:
+        file.write("-------------------------\n")
+        file.write("MSMARCO Report\n")
+        file.write("Settings:\n")
+        file.write("** Vector Num:" + str(graph.shape[0]) + "\n")
+        file.write("** DB Size (MB): " + str(DBSize / 1024 / 1024) + "\n")
+        file.write("** Top K: " + str(k) + "\n")
+        file.write("** Rounds: " + str(step) + "\n")
+        file.write("** Parallel Exploration: " + str(parallel_exploration) + "\n")
+        file.write("** RTT (s): " + str(rtt) + "\n")
+        file.write("\n")
+        file.write("Preprocessing Cost:\n")
+        file.write("** Storage (MB): " + str(Storage / 1024 / 1024) + "\n")
+        file.write("** Preparation Time (s): " + str(PrepTime) + "\n")
+        file.write("** Offline Communication Cost Per Q (KB, amt.): " + str(OfflineComm * step * parallel_exploration / 1024) + "\n")
+        file.write("\n")
+        file.write("Online Cost:\n")
+        avg_time = total_time / query_num
+        file.write("** Average Computation Time Per Query (s): " + str(avg_time) + "\n")
+        avg_time_with_rtt = avg_time + rtt * step
+        file.write("** Average Total Time Per Q (s): " + str(avg_time_with_rtt) + "\n")
+        file.write("** Online Communication Per Q (KB): " + str(OnlineComm * step * parallel_exploration/ 1024) + "\n")
+        file.write("-----------------------\n")
+
+    # use system call to call a python script named "mrr.py"
+    os.system("python mrr.py " + result_file_name + ">> " + report_file_name)
+    
+
 
 query_filepath = 'msmarco-queries-1000.tsv'
-result_filepath = 'pir-msmarco-results.txt'
+#result_filepath = 'pir-msmarco-results.txt'
+result_filepath = 'pir-msmarco-results-tmp.txt'
 query_embedding_file = 'msmarco-queries-1000-embeddings.npy'
+report_file = 'result-priv-ann.txt'
 
 queries = read_queries(query_filepath)
 
@@ -348,12 +427,25 @@ else :
     print(query_embeddings.shape)
     np.save(query_embedding_file, query_embeddings) 
 
-max_query_num = 1000
+max_query_num = 1
+k = 100
+step = 15
+parallel_exploration = 1
+rtt = 0.05 # 50ms
 
 # clock the total time
 start = time.time()
-output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, k = 100, step = 10)
+output_results_to_file(queries[:max_query_num], query_embeddings[:max_query_num], doc_ids, result_filepath, 
+                       k, step, parallel_exploration)
 end = time.time()
 print("Total Time: ", end - start)
 print("Average Time: ", (end - start)/max_query_num)
 #output_results_to_file(queries[2:3], query_embeddings[2:3], doc_ids, result_filepath, k = 100, step = 20)
+
+
+generate_report(report_file, result_filepath,
+                max_query_num, k, step, parallel_exploration, rtt, end-start) 
+
+# use system call to call a python script named "mrr.py"
+#os.system("python mrr.py " + result_filepath)
+#os.system("python mrr.py " + result_filepath + ">> result-priv-ann.txt")

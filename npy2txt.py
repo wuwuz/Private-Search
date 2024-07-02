@@ -16,6 +16,8 @@ if __name__ == "__main__":
     #output_file = 'output.txt'
     #input_file = 'msmarco_embeddings_reduced.npy'
     #output_file = 'msmarco_embeddings_reduced.txt'
+    input_file = "msmarco-queries-1000-embeddings.npy"
+    output_file = "msmarco-queries-1000-embeddings.txt"
     
     npy_to_txt(input_file, output_file)
     print(f"Matrix has been successfully written to {output_file} with numbers formatted to 5 decimal places.")
