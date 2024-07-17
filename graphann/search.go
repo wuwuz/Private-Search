@@ -3,7 +3,6 @@ package graphann
 import (
 	"container/heap"
 	"fmt"
-	"math"
 	"math/rand"
 	"sort"
 )
@@ -32,9 +31,15 @@ type BasicGraphInfo struct {
 	M       int
 	Graph   [][]int
 	Vectors [][]float32
+
+	// medoid
+
+	medoid int
 }
 
-func (g *BasicGraphInfo) Preprocess() {}
+func (g *BasicGraphInfo) Preprocess() {
+	g.medoid = FindMedoid(g.Vectors)
+}
 
 func (g *BasicGraphInfo) GetMetadata() (int, int, int) {
 	return g.N, g.Dim, g.M
@@ -49,15 +54,11 @@ func (g *BasicGraphInfo) GetVertexInfo(ids []int) ([]Vertex, error) {
 }
 
 func (g *BasicGraphInfo) GetStartVertex() ([]Vertex, error) {
-	n, _, _ := g.GetMetadata()
+	//targetNum := int(math.Sqrt(float64(n)))
+	//batch := make([]int, targetNum)
+	//for i := 0; i < targetNum; i++ {
 
-	targetNum := int(math.Sqrt(float64(n)))
-	batch := make([]int, targetNum)
-	for i := 0; i < targetNum; i++ {
-		batch[i] = i
-	}
-
-	v, err := g.GetVertexInfo(batch)
+	v, err := g.GetVertexInfo([]int{g.medoid})
 	if err != nil {
 		return nil, err
 	}

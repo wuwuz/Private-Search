@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"os"
 	"sort"
 	"time"
 
@@ -90,6 +89,7 @@ func main() {
 
 */
 
+/*
 func BuildGraph(n int, dim int, m int, vectors [][]float32, savepath string, dataset string) [][]int {
 	// First create a HNSW index
 	// we first strip the file extension from input file name
@@ -113,6 +113,14 @@ func BuildGraph(n int, dim int, m int, vectors [][]float32, savepath string, dat
 	}
 
 	graph := CreateGraphBasedOnHNSW(vectors, h, m)
+	EvaluateGraphQuality(vectors, graph)
+	return graph
+}
+*/
+
+func BuildGraph(n int, dim int, m int, vectors [][]float32, savepath string, dataset string) [][]int {
+	graph := CreateGraphVamana(vectors, m)
+	EvaluateGraphQuality(vectors, graph)
 	return graph
 }
 
@@ -308,6 +316,181 @@ func robustPruneWithOneExtra(vectors [][]float32, u int, neighbors []int, v int,
 	}
 
 	return ret
+}
+
+// this will execute the Vamana algorithm with one pass
+func VamanaOnePass(vectors [][]float32, graph [][]int, alpha float32) {
+
+	n := len(vectors)
+	m := len(graph[0])
+	dim := len(vectors[0])
+
+	frontend := GraphANNFrontend{
+		Graph: &BasicGraphInfo{
+			N:       n,
+			Dim:     dim,
+			M:       m,
+			Graph:   graph,
+			Vectors: vectors,
+		},
+	}
+
+	frontend.Preprocess()
+
+	// we enumerate all vertices in a random order
+	perm := rand.Perm(n)
+
+	for i := 0; i < n; i++ {
+		if i%10000 == 0 {
+			fmt.Printf("Processing %d-th vertex\n", i)
+		}
+
+		u := perm[i]
+		candidatesList, _ := frontend.SearchKNN(vectors[u], int(1.5*float32(m)), 30, 2, false)
+		candidates := make([]int, 0)
+		for j := 0; j < len(candidatesList); j++ {
+			v := int(candidatesList[j])
+			if v != u && v < n {
+				candidates = append(candidates, v)
+			}
+		}
+
+		candidates = append(candidates, graph[u]...)
+		graph[u] = robustPrune(vectors, u, candidates, m, alpha)
+
+		for j := 0; j < len(graph[u]); j++ {
+			v := graph[u][j]
+			graph[v] = robustPruneWithOneExtra(vectors, v, graph[v], u, m, alpha)
+		}
+	}
+
+}
+
+func CreateGraphVamana(vectors [][]float32, m int) [][]int {
+
+	start := time.Now()
+
+	n := len(vectors)
+	alphas := []float32{1.0, 1.2}
+
+	// we first build a random graph
+	graph := make([][]int, n)
+
+	for i := 0; i < n; i++ {
+		graph[i] = make([]int, m)
+		added := make(map[int]bool)
+		for j := 0; j < m; j++ {
+			graph[i][j] = rand.Intn(n)
+			for added[graph[i][j]] || graph[i][j] == i {
+				graph[i][j] = rand.Intn(n)
+			}
+			added[graph[i][j]] = true
+		}
+
+		// sort the neighbors according to their distance to i
+		sort.Slice(graph[i], func(j, k int) bool {
+			return L2Dist(vectors[i], vectors[graph[i][j]]) < L2Dist(vectors[i], vectors[graph[i][k]])
+		})
+
+		// verify that the neighbors are sorted by distance
+		for j := 1; j < m; j++ {
+			if L2Dist(vectors[i], vectors[graph[i][j-1]]) > L2Dist(vectors[i], vectors[graph[i][j]]) {
+				fmt.Printf("Error in sorting the neighbors of %d\n", i)
+			}
+		}
+	}
+
+	// now we execute the Vamana algorithm
+	for i := 0; i < len(alphas); i++ {
+		VamanaOnePass(vectors, graph, alphas[i])
+	}
+
+	// do a count of inbounds, simultaneously remove duplicates
+	inbounds := make([]int, n)
+	for i := 0; i < n; i++ {
+		// remove duplicates
+		seen := make(map[int]bool)
+		j := 0
+		for _, v := range graph[i] {
+			if _, ok := seen[v]; !ok {
+				seen[v] = true
+				graph[i][j] = v
+				j++
+			}
+		}
+		graph[i] = graph[i][:j]
+
+		for j := 0; j < len(graph[i]); j++ {
+			inbounds[graph[i][j]]++
+		}
+	}
+
+	// now we enumerate all edges (u -> v), and sample the edge with prob. (1.5*m)/inbounds[v]
+	for i := 0; i < n; i++ {
+		u := i
+		keep := make([]int, 0)
+		for j := 0; j < len(graph[i]); j++ {
+			v := graph[i][j]
+			prob := math.Min(float64(1.5*float64(m))/float64(inbounds[v]), 1.0)
+			if rand.Float64() < prob {
+				keep = append(keep, v)
+			}
+		}
+
+		if len(keep) > m {
+			keep = robustPrune(vectors, u, keep, m, 1.2)
+		}
+
+		graph[u] = keep
+	}
+
+	// now we make sure that all vertices have exactly m outbounds
+	// otherwise we add enough outbounds to make it m
+	for i := 0; i < n; i++ {
+		for len(graph[i]) < m {
+			// we add a random vertex to the outbounds
+			// make sure it's not i and not already in the outbounds
+			v := rand.Intn(n)
+			if v == i {
+				continue
+			}
+			ok := true
+			for j := 0; j < len(graph[i]); j++ {
+				if graph[i][j] == v {
+					ok = false
+				}
+			}
+			if ok {
+				graph[i] = append(graph[i], v)
+			}
+		}
+	}
+
+	inbounds = make([]int, n)
+	for i := 0; i < n; i++ {
+		for j := 0; j < len(graph[i]); j++ {
+			inbounds[graph[i][j]]++
+		}
+	}
+
+	// now we check the min and the max inbounds
+	minInbound := n
+	maxInbound := 0
+	for i := 0; i < n; i++ {
+		if inbounds[i] < minInbound {
+			minInbound = inbounds[i]
+		}
+		if inbounds[i] > maxInbound {
+			maxInbound = inbounds[i]
+		}
+	}
+
+	fmt.Printf("Min inbound: %d, Max inbound: %d\n", minInbound, maxInbound)
+
+	end := time.Now()
+	fmt.Println("Graph built, time = ", end.Sub(start))
+
+	return graph
 }
 
 func CreateGraphBasedOnHNSW(vectors [][]float32, hnsw *hnswgo.HNSW, m int) [][]int {
