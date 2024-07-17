@@ -16,9 +16,6 @@ CLUSTER_NUM = 4 * 32 * 10
 #CLUSTER_NUM = 100
 DIM_REDUCED = False
 
-# Initialize your model for embeddings
-model = SentenceTransformer('msmarco-distilbert-base-tas-b')
-
 # Load the embeddings data
 #embeddings_file = "msmarco_embeddings_reduced.npy"
 #embeddings_file = "msmarco_embeddings_reduced.npy"
@@ -78,8 +75,10 @@ k = 100
 
 query_filepath = 'msmarco-queries-1000.tsv'
 #result_filepath = 'pir-msmarco-results.txt'
-frontend_result_filepath = 'go_frontend_result.txt'
-result_filepath = 'go_frontend_result_docid.txt'
+#frontend_result_filepath = 'go_frontend_result.txt'
+#result_filepath = 'go_frontend_result_docid.txt'
+frontend_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output.txt'
+result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output_docid.txt'
 
 queries = read_queries(query_filepath)
 queries = queries[:max_query_num]
@@ -93,5 +92,5 @@ vertex2docid(queries, response, doc_ids, result_filepath, max_query_num, k)
 # clock the total time
 
 # use system call to call a python script named "mrr.py"
-#os.system("python mrr.py " + result_filepath)
+os.system("python mrr.py " + result_filepath)
 #os.system("python mrr.py " + result_filepath + ">> result-priv-ann.txt")

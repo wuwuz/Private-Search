@@ -42,6 +42,7 @@ rep_vector = np.load(rep_vector_file)
 #graph_file = "015graph.npy"
 graph_file = "graph_permuted.npy"
 graph = np.load(graph_file)
+num_vectors = graph.shape[0]
 
 print("graph shape: ", graph.shape)
 
@@ -142,22 +143,25 @@ class VertexInfo:
             #else:
                 #print("Read Graph Info Correct:", self.index)
 
-def query_vertex_info(indices, explored_graph, explored_vector):
+def query_vertex_info(indices, explored_graph, explored_vector, batch_size = 32):
 
     VertexInfoList = []
     to_query_list = []
 
     for idx in indices:
         if idx in explored_vector:
+            # generate a random number in [0, num_vectors - 1]
+            tmp = np.random.randint(0, num_vectors)
+            to_query_list.append(tmp)
             VertexInfoList.append(VertexInfo(idx, explored_vector[idx], explored_graph[idx], from_cache=True))
         else: 
             to_query_list.append(idx)
-            query_string = '&'.join([f'rowIndex={idx}' for idx in indices])
+            query_string = '&'.join([f'q={idx}' for idx in indices])
     
     if len(to_query_list) == 0:
         return VertexInfoList
 
-    query_string = '&'.join([f'rowIndex={idx}' for idx in to_query_list])
+    query_string = '&'.join([f'q={idx}' for idx in to_query_list])
     #print("query_string: ", query_string)
     response = requests.get(f'http://localhost:8080/query?{query_string}')
 
@@ -198,8 +202,11 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, paralle
     visited = set()
     explored_graph = {}
     explored_vector = {}
+    num_neighbors = len(rep_graph[0])
+    #print("num_neighbors: ", num_neighbors)
 
-    for i in range(1):
+    to_be_explored = []
+    for i in range(parallel_exploration):
     #entry_distance = np.min(distances)
     #entry_distance 
     #entry_offset = np.argmin(distances)
@@ -218,6 +225,7 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, paralle
         # add the vector of entry_idx to the explored_vector map
         explored_vector[entry_idx] = rep_vector[entry_offset]
         explored_graph[entry_idx] = rep_graph[entry_offset]
+        heapq.heappush(to_be_explored, (entry_distance, entry_idx))
     #explored_vector = {entry_idx: rep_vector[entry_offset]}
     # add the neighbors of the entry_idx to the to_be_explored list
     #explored_graph = {entry_idx: rep_graph[entry_offset]}
@@ -225,8 +233,6 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, paralle
     # the to_be_explored list is a priority queue containing tuples
     # each tuples contains the distance to the query_vector and the index
 
-    to_be_explored = []
-    heapq.heappush(to_be_explored, (entry_distance, entry_idx))
 
     total_query = 0
     succ_query = 0
@@ -236,28 +242,22 @@ def find_approximate_nearest_neighbors(query_vector, k = 100, step = 10, paralle
         #print("Step: ", i)
         #print("to_be_explored: ", to_be_explored)
         #print("graph[to_be_explored]: ", graph[to_be_explored])
-        dist, current_idx = heapq.heappop(to_be_explored)
-        print("current_idx: ", current_idx)
-        print("current dist square", dist * dist)
-        #print("in step ", i, "current_idx: ", current_idx, "current_neighbors size", len(explored_graph[current_idx]))
-        # let neighbors be 
-        current_neighbors = explored_graph[current_idx]
         #print("current neighbors: ", current_neighbors)
 
         #print("in step ", i, "current_idx: ", current_idx, "current_neighbors size", len(current_neighbors))
-        vertex_info = query_vertex_info(current_neighbors, explored_graph, explored_vector) # TODO: optimize it so that repeated queries are not made
+        batch_query = []
+        batch_size = len(rep_graph[0])
 
-
-        for j in range(parallel_exploration - 1):
-            
-            if len(to_be_explored) == 0:  # there's nothing to be explored.
+        for j in range(parallel_exploration):
+            if len(to_be_explored) == 0:
                 break
+            _, current_idx = heapq.heappop(to_be_explored)
+            current_neighbors = explored_graph[current_idx]
+            # add the neighbors of the current_idx to the to_be_explored list
+            for neighbor in current_neighbors:
+                batch_query.append(neighbor)
 
-            _, current_idx_2 = heapq.heappop(to_be_explored)
-            current_neighbors_2 = explored_graph[current_idx_2]
-
-            vertex_info_2 = query_vertex_info(current_neighbors_2, explored_graph, explored_vector)
-            vertex_info = vertex_info + vertex_info_2
+        vertex_info = query_vertex_info(batch_query, explored_graph, explored_vector) # TODO: optimize it so that repeated queries are not made
 
         #print("in step ", i, "retrieving ", len(vertex_info))
 
@@ -427,10 +427,10 @@ else :
     print(query_embeddings.shape)
     np.save(query_embedding_file, query_embeddings) 
 
-max_query_num = 1
+max_query_num = 1000
 k = 100
-step = 15
-parallel_exploration = 1
+step = 5
+parallel_exploration = 2
 rtt = 0.05 # 50ms
 
 # clock the total time

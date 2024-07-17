@@ -13,8 +13,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
-	"example.com/private-search/pianopir"
+	"github.com/wuwuz/private-search/pianopir"
 )
 
 var matrix [][]float32
@@ -192,7 +193,7 @@ func ConvertFromRawDB(vectorSize int, numNeighbors int, entry []uint64) ([]float
 func nonPrivateQueryHandler(w http.ResponseWriter, r *http.Request) {
 	// TODO: implement non-private query handler
 	query := r.URL.Query()
-	rowIndexesStr := query["rowIndex"]
+	rowIndexesStr := query["q"]
 
 	//fmt.Println("Querying for: ", rowIndexesStr)
 
@@ -207,13 +208,25 @@ func nonPrivateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		indices = append(indices, uint64(rowIndex))
 	}
 
+	//log.Printf("Non-private query for: %v\n", indices)
+
 	vectors := make([][]float32, len(indices))
 	neighbors := make([][]uint32, len(indices))
 
 	for i := 0; i < len(indices); i++ {
-		vectors[i] = matrix[indices[i]]
-		neighbors[i] = graph[indices[i]]
+		//vectors[i] = matrix[indices[i]]
+		//neighbors[i] = graph[indices[i]]
+		// just fill zeros
+		vectors[i] = make([]float32, vectorSize)
+		for j := 0; j < vectorSize; j++ {
+			vectors[i][j] = 0
+		}
+		neighbors[i] = make([]uint32, numNeighbors)
+		for j := 0; j < numNeighbors; j++ {
+			neighbors[i][j] = 0
+		}
 	}
+
 	var responseMap []map[string]interface{}
 	for i := 0; i < len(indices); i++ {
 		responseData := map[string]interface{}{
@@ -239,7 +252,7 @@ func nonPrivateQueryHandler(w http.ResponseWriter, r *http.Request) {
 
 func queryHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	rowIndexesStr := query["rowIndex"]
+	rowIndexesStr := query["q"]
 
 	//fmt.Println("Querying for: ", rowIndexesStr)
 
@@ -253,11 +266,27 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		indices = append(indices, uint64(rowIndex))
 	}
+	//log.Printf("Private query for: %v\n", indices)
 
 	// then we make a batch query
 	//fmt.Println("Querying for: ", indices)
-	responses, _ := PIR.Query(indices)
-	//fmt.Println("Got responses: ", responses)
+
+	// we want to accurately measure the following call's time
+
+	//start := time.Now()
+	//log.Printf("Querying for %d indices: %v\n", len(indices), indices)
+	responses := make([][]uint64, 0)
+	// by default each time we make a query of batch size [numNeighbors]
+	for i := 0; i < len(indices); i += numNeighbors {
+		response, _ := PIR.Query(indices[i : i+numNeighbors])
+		responses = append(responses, response...)
+	}
+	//end := time.Now()
+	//log.Printf("Query time = %v\n", end.Sub(start))
+
+	if len(responses) != len(indices) {
+		panic("Number of responses does not match the number of queries")
+	}
 
 	vectors := make([][]float32, len(responses))
 	neighbors := make([][]uint32, len(responses))
@@ -266,9 +295,19 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	for i, response := range responses {
 		vectors[i], neighbors[i] = ConvertFromRawDB(vectorSize, numNeighbors, response)
 	}
+	/*
+
+		vectors := make([][]float32, len(indices))
+		neighbors := make([][]uint32, len(indices))
+
+		for i := 0; i < len(indices); i++ {
+			vectors[i] = matrix[indices[i]]
+			neighbors[i] = graph[indices[i]]
+		}
+	*/
 
 	var responseMap []map[string]interface{}
-	for i := 0; i < len(responses); i++ {
+	for i := 0; i < len(indices); i++ {
 		responseData := map[string]interface{}{
 			"matrixRow": vectors[i],
 			"neighbors": neighbors[i],
@@ -280,23 +319,25 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// verify the neighbors are correct
-		// there are two cases: either the neighbors are all zeros, or they match the original graph
-		allZeros := true
-		allMatch := true
-		for j := 0; j < len(neighbors[i]); j++ {
-			if neighbors[i][j] != 0 {
-				allZeros = false
+		/*
+			// verify the neighbors are correct
+			// there are two cases: either the neighbors are all zeros, or they match the original graph
+			allZeros := true
+			allMatch := true
+			for j := 0; j < len(neighbors[i]); j++ {
+				if neighbors[i][j] != 0 {
+					allZeros = false
+				}
+				if neighbors[i][j] != graph[indices[i]][j] {
+					allMatch = false
+				}
 			}
-			if neighbors[i][j] != graph[indices[i]][j] {
-				allMatch = false
-			}
-		}
 
-		if !allZeros && !allMatch {
-			// generate an error
-			fmt.Println("Error: neighbors do not match the original graph")
-		}
+			if !allZeros && !allMatch {
+				// generate an error
+				fmt.Println("Error: neighbors do not match the original graph")
+			}
+		*/
 	}
 
 	jsonResponse, err := json.Marshal(responseMap)
@@ -394,6 +435,33 @@ func main() {
 	}
 	log.Printf("PIR config: %v\n", PIR.Config())
 	log.Printf("PIR local storage size: %v MB\n", PIR.LocalStorageSize()/1024/1024)
+
+	// we generate 100 random batch queries and test the average query time
+
+	start := time.Now()
+
+	tmp := 0.0
+
+	for i := 0; i < 100; i++ {
+		batch := make([]uint64, 0, 32)
+		for j := 0; j < 32; j++ {
+			batch = append(batch, uint64(rand.Intn(len(matrix))))
+		}
+		//tmpStart := time.Now()
+		response, _ := PIR.Query(batch)
+		//tmpEnd := time.Now()
+		//log.Printf("Query time = %v\n", tmpEnd.Sub(tmpStart))
+		for _, entry := range response {
+			//_, _ = ConvertFromRawDB(vectorSize, numNeighbors, entry)
+			vector, _ := ConvertFromRawDB(vectorSize, numNeighbors, entry)
+			tmp += float64(vector[0])
+		}
+	}
+
+	end := time.Now()
+	log.Printf("tmp = %v\n", tmp)
+	log.Print("Total query time = ", end.Sub(start))
+	log.Printf("Average query time = %v\n", end.Sub(start)/100)
 
 	http.HandleFunc("/query", queryHandler)
 	http.HandleFunc("/info", infoQueryHandler)

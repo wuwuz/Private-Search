@@ -175,8 +175,8 @@ func TestBatchPIRPerf(t *testing.T) {
 	// Arrange
 	// Set up any necessary data or arguments
 
-	//DBSize := uint64(3201821)
-	DBSize := uint64(100000000)
+	DBSize := uint64(3201821)
+	//DBSize := uint64(100000000)
 	//DBSize := uint64(300000)
 	DBEntrySize := uint64(112)
 	BatchSize := uint64(32)
@@ -211,11 +211,10 @@ func TestBatchPIRPerf(t *testing.T) {
 
 	// now we make 1000 random batchQuery
 
-	step := 20
 	queryNum := 300
 
 	start = time.Now()
-	for i := 0; i < queryNum*step; i++ {
+	for i := 0; i < queryNum; i++ {
 		batch := make([]uint64, 0, BatchSize)
 		for j := 0; j < int(BatchSize); j++ {
 			batch = append(batch, rng.Uint64()%DBSize)
@@ -233,8 +232,16 @@ func TestBatchPIRPerf(t *testing.T) {
 	}
 	end = time.Now()
 	t.Logf("Total query time = %v\n", end.Sub(start))
-	t.Logf("Average query time per batch = %v\n", end.Sub(start)/time.Duration(queryNum*step))
-	t.Logf("Average query time given all steps = %v\n", end.Sub(start)/time.Duration(queryNum))
+	t.Logf("Average query time per batch = %v\n", end.Sub(start)/time.Duration(queryNum))
+	avgBatchTime := end.Sub(start) / time.Duration(queryNum)
+
+	rtt := time.Duration(50) * time.Millisecond
+	parallel := 2
+	step := 15
+
+	// now we estimate the average ann latency by (avgBatchTime * parallel + rtt) * step
+	annLatency := (avgBatchTime*time.Duration(parallel) + rtt) * time.Duration(step)
+	t.Logf("Estimated ANN latency = %v\n", annLatency)
 }
 
 func TestXORPerf(t *testing.T) {

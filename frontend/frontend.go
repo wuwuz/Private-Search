@@ -87,7 +87,7 @@ func MakeGraphQuery(indices []int, serverAddress string) ([]vertexInfo, error) {
 
 	query_string := ""
 	for _, idx := range indices {
-		query_string += fmt.Sprintf("&rowIndex=%d", idx)
+		query_string += fmt.Sprintf("&q=%d", idx)
 	}
 
 	query_string = "http://" + serverAddress + "/query?" + query_string
@@ -143,7 +143,7 @@ func MakeNonPrivateQuery(serverAddress string, indices []int) ([]vertexInfo, err
 
 	query_string := ""
 	for _, idx := range indices {
-		query_string += fmt.Sprintf("&rowIndex=%d", idx)
+		query_string += fmt.Sprintf("&q=%d", idx)
 	}
 
 	query_string = "http://" + serverAddress + "/nonprivatequery?" + query_string
@@ -210,8 +210,8 @@ func (pq *exploreQueue) Pop() interface{} {
 func MakeANNQuery(serverAddress string, queryVector []float32, k int, maxStep int, parallel int, benchmarking bool) []int {
 	// in our python implementation, we will store extra vertex info to fast-start the first round
 	// here, we just do the normal starting by starting from vertex 0...parallel - 1
-	log.Printf("Starting ANN query with %d vertices, %d neighbors, %d queries, %d output, %d steps, %d parallel, %t skip prep\n",
-		n, m, q, k, maxStep, parallel, skipPrep)
+	//log.Printf("Starting ANN query with %d vertices, %d neighbors, %d queries, %d output, %d steps, %d parallel, %t skip prep\n",
+	//	n, m, q, k, maxStep, parallel, skipPrep)
 
 	knownVertices := map[int]vertexInfo{}
 	// define a priority queue
@@ -245,8 +245,8 @@ func MakeANNQuery(serverAddress string, queryVector []float32, k int, maxStep in
 	for step := 0; step < maxStep; step++ {
 
 		// each time we issue parallel batches, each exploring one vertex's neighbors
+		batchQ := make([]int, 0, m)
 		for rept := 0; rept < parallel; rept++ {
-			batchQ := make([]int, 0, m)
 			if len(toBeExploredItems) == 0 || benchmarking {
 				// in this case we simply make random queries
 				for i := 0; i < m; i++ {
@@ -263,35 +263,36 @@ func MakeANNQuery(serverAddress string, queryVector []float32, k int, maxStep in
 			//log.Printf("Exploring %d vertices at step %d", len(batchQ), step)
 			//log.Printf("The first 5 vertices are %v", batchQ[:5])
 
-			queryResults, err := MakeGraphQuery(batchQ, serverAddress)
-			if err != nil {
-				panic(err)
-			}
+		}
 
-			if benchmarking {
-				// if we are just benchmarking, we don't care about the return
+		queryResults, err := MakeGraphQuery(batchQ, serverAddress)
+		if err != nil {
+			panic(err)
+		}
+
+		if benchmarking {
+			// if we are just benchmarking, we don't care about the return
+			continue
+		}
+
+		for _, v := range queryResults {
+			if _, ok := knownVertices[v.index]; ok {
+				// we have already known this vertex
 				continue
 			}
-
-			for _, v := range queryResults {
-				if _, ok := knownVertices[v.index]; ok {
-					// we have already known this vertex
-					continue
+			// if the neighbor list is all zeroes, we skip this vertex
+			ok := false
+			for _, neighbor := range v.neighbors {
+				if neighbor != 0 {
+					ok = true
+					break
 				}
-				// if the neighbor list is all zeroes, we skip this vertex
-				ok := false
-				for _, neighbor := range v.neighbors {
-					if neighbor != 0 {
-						ok = true
-						break
-					}
-				}
-				if ok {
-					knownVertices[v.index] = v
-					// calculate the distance to the query vector
-					dist := calcDist(v.vector, queryVector)
-					heap.Push(&toBeExploredItems, &toBeExploredItem{dist: dist, id: v.index})
-				}
+			}
+			if ok {
+				knownVertices[v.index] = v
+				// calculate the distance to the query vector
+				dist := calcDist(v.vector, queryVector)
+				heap.Push(&toBeExploredItems, &toBeExploredItem{dist: dist, id: v.index})
 			}
 		}
 	}
@@ -437,7 +438,7 @@ func main() {
 	for {
 		resp, err := http.Get("http://localhost:8080/info")
 		if err != nil {
-			fmt.Println("Backend is not up yet, retrying in 3 seconds...")
+			//fmt.Println("Backend is not up yet, retrying in 3 seconds...")
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -447,7 +448,7 @@ func main() {
 			fmt.Println("Backend is up!")
 			break
 		} else {
-			fmt.Println("Backend is not ready yet, retrying in 3 seconds...")
+			//fmt.Println("Backend is not ready yet, retrying in 3 seconds...")
 			time.Sleep(3 * time.Second)
 		}
 	}
@@ -455,9 +456,14 @@ func main() {
 	// fast starting
 	// build up the fast starting vertices by just randomly querying the server
 	targetFastStartVertices := int(math.Sqrt(float64(n)))
+	log.Printf("Fast starting with %d vertices\n", targetFastStartVertices)
 	fastStartVertices = make(map[int]vertexInfo)
 
+	start := time.Now()
+
+	tmp := 0
 	for i := 0; i < targetFastStartVertices/m; i++ {
+		tmp += 1
 		batchQ := make([]int, 0, m)
 		for j := 0; j < m; j++ {
 			batchQ = append(batchQ, rand.Intn(n))
@@ -472,15 +478,48 @@ func main() {
 		}
 	}
 
+	end := time.Now()
+	fmt.Println("Average non-private batch query time: ", end.Sub(start).Seconds()/float64(tmp))
+
+	// we now make 100 private queries to the server and get the average time
+
+	start = time.Now()
+	for i := 0; i < 100; i++ {
+		batchQ := make([]int, 0, m)
+		for j := 0; j < m; j++ {
+			batchQ = append(batchQ, rand.Intn(n))
+		}
+
+		_, err := MakeGraphQuery(batchQ, ServerAddress)
+		if err != nil {
+			panic(err)
+		}
+	}
+	end = time.Now()
+	fmt.Println("Average private batch query time: ", end.Sub(start).Seconds()/100.0)
+
+	// we make 1000 info queries to the server and get the average time
+
+	start = time.Now()
+	for i := 0; i < 1000; i++ {
+		resp, err := http.Get("http://localhost:8080/info")
+		if err != nil {
+			panic(err)
+		}
+		resp.Body.Close()
+	}
+	end = time.Now()
+	fmt.Println("Average info query time: ", end.Sub(start).Seconds()/1000.0)
+
 	result := make([][]int, q)
-	start := time.Now()
+	start = time.Now()
 
 	for i := 0; i < q; i++ {
 		ans := MakeANNQuery(ServerAddress, queryVectors[i], outputK, maxStep, parallel, skipPrep)
 		result[i] = ans
 	}
 
-	end := time.Now()
+	end = time.Now()
 	totalTime := end.Sub(start)
 	fmt.Println("Total time: ", totalTime)
 	avgTime := totalTime.Seconds() / float64(q)

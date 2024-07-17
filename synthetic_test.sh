@@ -1,12 +1,12 @@
 #!/bin/bash
 # define variables
-n=100000 # number of vectors
+n=2000000 #3201821 # number of vectors
 d=192 # dimension of vectors
 m=32 # number of neighbors in the graph
 k=100 # number of outputs to retrieve
 q=100 # number of queries 
 step=15 # max number of steps in the graph
-parallel=1 # number of parallel queries to make in one step
+parallel=2 # number of parallel queries to make in one step
 rtt=50 # round trip time in milliseconds
 report="synthetic_report.txt"
 # if true, skip the preprocessing and just run the online
