@@ -18,4 +18,5 @@ require (
 	github.com/evan176/hnswgo v0.0.0-20220622031020-39253a76f9e4 // indirect
 	github.com/kshard/fvecs v0.0.1 // indirect
 	github.com/kshedden/gonpy v0.0.0-20210519231815-fa3c8dd8e59b // indirect
+	github.com/yahoojapan/gongt v0.0.0-20190517050727-966dcc7aa5e8 // indirect
 )

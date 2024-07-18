@@ -21,10 +21,12 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"time"
 
 	"github.com/evan176/hnswgo"
+	"github.com/yahoojapan/gongt"
 )
 
 /*
@@ -93,26 +95,10 @@ func main() {
 func BuildGraph(n int, dim int, m int, vectors [][]float32, savepath string, dataset string) [][]int {
 	// First create a HNSW index
 	// we first strip the file extension from input file name
-	hnswIndexFileName := dataset + "_hnsw.bin"
-	fmt.Println("HNSW index file name: ", hnswIndexFileName)
-	h := hnswgo.New(dim, m, 300, 100, uint32(n), "l2")
-
-	// only when the hnsw index file does not exist, we create a new hnsw index
-	if _, err := os.Stat(savepath + "/" + hnswIndexFileName); os.IsNotExist(err) {
-		fmt.Println("Creating HNSW index")
-		start := time.Now()
-		for i := 0; i < n; i++ {
-			h.AddPoint(vectors[i], uint32(i))
-		}
-		end := time.Now()
-		h.Save(savepath + hnswIndexFileName)
-		fmt.Println("HNSW index created, time = ", end.Sub(start))
-	} else {
-		h = hnswgo.Load(savepath+"/"+hnswIndexFileName, dim, "l2")
-		fmt.Println("Loaded HNSW index from file")
-	}
-
-	graph := CreateGraphBasedOnHNSW(vectors, h, m)
+	ngtFileName := savepath + "/" + dataset + ".ngt"
+	fmt.Println("NGT index file name: ", ngtFileName)
+	graph := CreateGraphBasedOnNGT(vectors, ngtFileName, m)
+	EvaluateGraphQuality(vectors, graph)
 	return graph
 }
 
@@ -310,6 +296,207 @@ func robustPruneWithOneExtra(vectors [][]float32, u int, neighbors []int, v int,
 	return ret
 }
 
+func CreateGraphBasedOnNGT(vectors [][]float32, ngtFile string, m int) [][]int {
+
+	n := len(vectors)
+	dim := len(vectors[0])
+
+	start := time.Now()
+
+	var ngt *gongt.NGT
+	if _, err := os.Stat(ngtFile); os.IsNotExist(err) {
+
+		start := time.Now()
+		ngt = gongt.New(ngtFile).SetObjectType(gongt.Float).SetDimension(dim).Open()
+
+		for _, v := range vectors {
+			// convert the vector to float64
+			tmp := make([]float64, len(v))
+			for i := 0; i < len(v); i++ {
+				tmp[i] = float64(v[i])
+			}
+			ngt.Insert(tmp)
+		}
+
+		if err := ngt.CreateAndSaveIndex(runtime.NumCPU()); err != nil {
+			fmt.Println("Error in creating ngt index: ", err)
+		}
+
+		end := time.Now()
+		fmt.Printf("NGT index created, time = %v\n", end.Sub(start))
+
+		// test the ngt index
+
+		hit := 0
+		for i := 0; i < 1000; i++ {
+			tmp := make([]float64, len(vectors[i]))
+			for j := 0; j < len(vectors[i]); j++ {
+				tmp[j] = float64(vectors[i][j])
+			}
+			res, err := ngt.Search(tmp, 10, gongt.DefaultEpsilon)
+			if err != nil {
+				fmt.Println("Error in searching: ", err)
+			}
+			// verify that the search has found the vertex itself
+			for j := 0; j < len(res); j++ {
+				if int(res[j].ID-1) == i {
+					hit += 1
+					break
+				}
+			}
+		}
+
+		fmt.Print("Hit rate for NGT: ", float32(hit)/float32(1000), "\n")
+	} else {
+		ngt = gongt.New(ngtFile).Open()
+	}
+	defer ngt.Close()
+
+	alpha := float32(1.2) // the alpha parameter in the robust prune function
+
+	// we enumerate all vertices in a random order
+	perm := rand.Perm(n)
+
+	graph := make([][]int, n)
+	for i := 0; i < n; i++ {
+		graph[i] = make([]int, 0)
+	}
+
+	for i := 0; i < n; i++ {
+
+		if i%10000 == 0 {
+			fmt.Printf("Processing %d-th vertex\n", i)
+		}
+
+		//if i%1000 == 0 {
+		//	fmt.Printf("Processing %d-th vertex\n", i)
+		//}
+		u := perm[i]
+
+		// we first find the m nearest neighbors of v
+		//  convert the vectors to float64
+		tmp := make([]float64, len(vectors[u]))
+		for j := 0; j < len(vectors[u]); j++ {
+			tmp[j] = float64(vectors[u][j])
+		}
+		candidatesList, err := ngt.Search(tmp, m*2, gongt.DefaultEpsilon)
+		if err != nil {
+			fmt.Println("Error in searching: ", err)
+		}
+
+		// we cast the candidates to int
+		candidates := make([]int, 0)
+		for j := 0; j < len(candidatesList); j++ {
+			v := int(candidatesList[j].ID) - 1 // very important to -1
+			if v != u && v < n {
+				candidates = append(candidates, v)
+			}
+		}
+
+		// also, there may already some connected vertices
+		//candidates = append(candidates, graph[u]...)
+
+		// we prune the neighbors to m
+		candidates = robustPrune(vectors, u, candidates, m, alpha)
+		graph[u] = append(graph[u], candidates...)
+		//graph[u] = candidates
+
+		// we intend to add u to the outbound of all its neighbors
+		for j := 0; j < len(candidates); j++ {
+			v := candidates[j]
+			graph[v] = append(graph[v], u)
+			//graph[v] = robustPrune(vectors, v, graph[v], m, alpha)
+		}
+	}
+
+	// do a count of inbounds, simultaneously remove duplicates
+	inbounds := make([]int, n)
+	for i := 0; i < n; i++ {
+		// remove duplicates
+		seen := make(map[int]bool)
+		j := 0
+		for _, v := range graph[i] {
+			if _, ok := seen[v]; !ok {
+				seen[v] = true
+				graph[i][j] = v
+				j++
+			}
+		}
+		graph[i] = graph[i][:j]
+
+		for j := 0; j < len(graph[i]); j++ {
+			inbounds[graph[i][j]]++
+		}
+	}
+
+	// now we enumerate all edges (u -> v), and sample the edge with prob. (1.5*m)/inbounds[v]
+	for i := 0; i < n; i++ {
+		u := i
+		keep := make([]int, 0)
+		for j := 0; j < len(graph[i]); j++ {
+			v := graph[i][j]
+			prob := math.Min(float64(1.5*float64(m))/float64(inbounds[v]), 1.0)
+			if rand.Float64() < prob {
+				keep = append(keep, v)
+			}
+		}
+
+		if len(keep) > m {
+			keep = robustPrune(vectors, u, keep, m, alpha)
+		}
+
+		graph[u] = keep
+	}
+
+	// now we make sure that all vertices have exactly m outbounds
+	// otherwise we add enough outbounds to make it m
+	for i := 0; i < n; i++ {
+		for len(graph[i]) < m {
+			// we add a random vertex to the outbounds
+			// make sure it's not i and not already in the outbounds
+			v := rand.Intn(n)
+			if v == i {
+				continue
+			}
+			ok := true
+			for j := 0; j < len(graph[i]); j++ {
+				if graph[i][j] == v {
+					ok = false
+				}
+			}
+			if ok {
+				graph[i] = append(graph[i], v)
+			}
+		}
+	}
+
+	inbounds = make([]int, n)
+	for i := 0; i < n; i++ {
+		for j := 0; j < len(graph[i]); j++ {
+			inbounds[graph[i][j]]++
+		}
+	}
+
+	// now we check the min and the max inbounds
+	minInbound := n
+	maxInbound := 0
+	for i := 0; i < n; i++ {
+		if inbounds[i] < minInbound {
+			minInbound = inbounds[i]
+		}
+		if inbounds[i] > maxInbound {
+			maxInbound = inbounds[i]
+		}
+	}
+
+	fmt.Printf("Min inbound: %d, Max inbound: %d\n", minInbound, maxInbound)
+
+	end := time.Now()
+	fmt.Println("Graph built, time = ", end.Sub(start))
+
+	return graph
+}
+
 func CreateGraphBasedOnHNSW(vectors [][]float32, hnsw *hnswgo.HNSW, m int) [][]int {
 
 	start := time.Now()
@@ -359,18 +546,6 @@ func CreateGraphBasedOnHNSW(vectors [][]float32, hnsw *hnswgo.HNSW, m int) [][]i
 		for j := 0; j < len(candidates); j++ {
 			v := candidates[j]
 			graph[v] = append(graph[v], u)
-
-			/*
-				if len(graph[v]) == m {
-					// in this case we need to prune one vertex
-
-					//graph[v] = append(graph[v], u)
-					//graph[v] = robustPrune(vectors, v, graph[v], m, alpha)
-					// TODO: quality degrades??
-				} else {
-					graph[v] = append(graph[v], u)
-				}
-			*/
 			//graph[v] = robustPrune(vectors, v, graph[v], m, alpha)
 		}
 	}
