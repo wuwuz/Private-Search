@@ -23,6 +23,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/evan176/hnswgo"
@@ -204,18 +205,19 @@ func robustPrune(vectors [][]float32, u int, candidates []int, m int, alpha floa
 			}
 		}
 
+		// DEPRECATED: we don't need to sort the accept list
 		// in this case we sort the accept list by distance to u again
-		sort.Slice(accept, func(i, j int) bool {
-			return accept[i].dist < accept[j].dist
-		})
+		//sort.Slice(accept, func(i, j int) bool {
+		//	return accept[i].dist < accept[j].dist
+		//})
 	}
 
 	ret := make([]int, len(accept))
 	for i := 0; i < len(accept); i++ {
 		ret[i] = accept[i].id
-		if i > 0 && accept[i].dist < accept[i-1].dist {
-			fmt.Println("Error in robust prune: the neighbors are not sorted by distance")
-		}
+		//if i > 0 && accept[i].dist < accept[i-1].dist {
+		//	fmt.Println("Error in robust prune: the neighbors are not sorted by distance")
+		//}
 	}
 	return ret
 }
@@ -354,121 +356,132 @@ func CreateGraphBasedOnNGT(vectors [][]float32, ngtFile string, m int) [][]int {
 
 	alpha := float32(1.2) // the alpha parameter in the robust prune function
 
-	// we enumerate all vertices in a random order
-	perm := rand.Perm(n)
-
 	graph := make([][]int, n)
-	for i := 0; i < n; i++ {
-		graph[i] = make([]int, 0)
-	}
 
-	for i := 0; i < n; i++ {
+	//maxThread := runtime.NumCPU() - 1
+	maxThread := 16
+	fmt.Print("Number of threads: ", maxThread, "\n")
 
-		if i%10000 == 0 {
-			fmt.Printf("Processing %d-th vertex\n", i)
-		}
+	// we now use multithread to build the graph
+	// each thread will process n/maxThread vertices
 
-		//if i%1000 == 0 {
-		//	fmt.Printf("Processing %d-th vertex\n", i)
-		//}
-		u := perm[i]
+	var wg sync.WaitGroup
+	wg.Add(maxThread)
 
-		// we first find the m nearest neighbors of v
-		//  convert the vectors to float64
-		tmp := make([]float64, len(vectors[u]))
-		for j := 0; j < len(vectors[u]); j++ {
-			tmp[j] = float64(vectors[u][j])
-		}
-		candidatesList, err := ngt.Search(tmp, m*2, gongt.DefaultEpsilon)
-		if err != nil {
-			fmt.Println("Error in searching: ", err)
-		}
+	perThreadVertices := (n + maxThread - 1) / maxThread
 
-		// we cast the candidates to int
-		candidates := make([]int, 0)
-		for j := 0; j < len(candidatesList); j++ {
-			v := int(candidatesList[j].ID) - 1 // very important to -1
-			if v != u && v < n {
-				candidates = append(candidates, v)
+	for t := 0; t < maxThread; t++ {
+		start := t * perThreadVertices
+		end := min((t+1)*perThreadVertices, n)
+
+		go func(start, end int) {
+			for u := start; u < end; u++ {
+				//  convert the vectors to float64
+				tmp := make([]float64, len(vectors[u]))
+				for j := 0; j < len(vectors[u]); j++ {
+					tmp[j] = float64(vectors[u][j])
+				}
+				candidatesList, err := ngt.Search(tmp, int(float32(m)*1.5), gongt.DefaultEpsilon)
+				if err != nil {
+					fmt.Println("Error in searching: ", err)
+				}
+
+				// we cast the candidates to int
+				candidates := make([]int, 0)
+				for j := 0; j < len(candidatesList); j++ {
+					v := int(candidatesList[j].ID) - 1 // very important to -1
+					if v != u && v < n {
+						candidates = append(candidates, v)
+					}
+				}
+
+				// also, there may already some connected vertices
+				//candidates = append(candidates, graph[u]...)
+
+				// we prune the neighbors to m
+				candidates = robustPrune(vectors, u, candidates, m, alpha)
+				graph[u] = candidates
 			}
-		}
 
-		// also, there may already some connected vertices
-		//candidates = append(candidates, graph[u]...)
+			wg.Done()
+		}(start, end)
+	}
 
-		// we prune the neighbors to m
-		candidates = robustPrune(vectors, u, candidates, m, alpha)
-		graph[u] = append(graph[u], candidates...)
-		//graph[u] = candidates
+	wg.Wait()
 
-		// we intend to add u to the outbound of all its neighbors
-		for j := 0; j < len(candidates); j++ {
-			v := candidates[j]
-			graph[v] = append(graph[v], u)
-			//graph[v] = robustPrune(vectors, v, graph[v], m, alpha)
+	fmt.Printf("First pass done\n")
+
+	// we now add the bi-directional edges
+	biGraph := make([][]int, n)
+	for u := 0; u < n; u++ {
+		biGraph[u] = make([]int, 0)
+	}
+	for u := 0; u < n; u++ {
+		for _, v := range graph[u] {
+			biGraph[u] = append(biGraph[u], v)
+			biGraph[v] = append(biGraph[v], u)
 		}
 	}
 
-	// do a count of inbounds, simultaneously remove duplicates
+	// do a count of inbound degree
 	inbounds := make([]int, n)
 	for i := 0; i < n; i++ {
-		// remove duplicates
-		seen := make(map[int]bool)
-		j := 0
-		for _, v := range graph[i] {
-			if _, ok := seen[v]; !ok {
-				seen[v] = true
-				graph[i][j] = v
-				j++
-			}
-		}
-		graph[i] = graph[i][:j]
-
-		for j := 0; j < len(graph[i]); j++ {
-			inbounds[graph[i][j]]++
-		}
+		inbounds[i] = len(biGraph[i])
 	}
 
 	// now we enumerate all edges (u -> v), and sample the edge with prob. (1.5*m)/inbounds[v]
-	for i := 0; i < n; i++ {
-		u := i
-		keep := make([]int, 0)
-		for j := 0; j < len(graph[i]); j++ {
-			v := graph[i][j]
-			prob := math.Min(float64(1.5*float64(m))/float64(inbounds[v]), 1.0)
-			if rand.Float64() < prob {
-				keep = append(keep, v)
-			}
-		}
+	// again we use multithread to do this
 
-		if len(keep) > m {
-			keep = robustPrune(vectors, u, keep, m, alpha)
-		}
+	var wg2 sync.WaitGroup
+	wg2.Add(maxThread)
 
-		graph[u] = keep
-	}
+	for t := 0; t < maxThread; t++ {
+		start := t * perThreadVertices
+		end := min((t+1)*perThreadVertices, n)
 
-	// now we make sure that all vertices have exactly m outbounds
-	// otherwise we add enough outbounds to make it m
-	for i := 0; i < n; i++ {
-		for len(graph[i]) < m {
-			// we add a random vertex to the outbounds
-			// make sure it's not i and not already in the outbounds
-			v := rand.Intn(n)
-			if v == i {
-				continue
-			}
-			ok := true
-			for j := 0; j < len(graph[i]); j++ {
-				if graph[i][j] == v {
-					ok = false
+		go func(start, end int) {
+			r := rand.New(rand.NewSource(int64(start)))
+			for u := start; u < end; u++ {
+				connection := make([]int, 0)
+				for _, v := range biGraph[u] {
+					prob := math.Min(float64(1.5*float64(m))/float64(inbounds[v]), 1.0)
+					if r.Float64() < prob {
+						connection = append(connection, v)
+					}
 				}
+
+				if len(connection) > m {
+					connection = robustPrune(vectors, u, connection, m, alpha)
+				}
+
+				// we fill the connection by random neighbors
+				for len(connection) < m {
+					// we add a random vertex to the outbounds
+					// make sure it's not i and not already in the outbounds
+					v := r.Intn(n)
+					if v == u {
+						continue
+					}
+					ok := true
+					for _, vv := range connection {
+						if vv == v {
+							ok = false
+							break
+						}
+					}
+					if ok {
+						connection = append(connection, v)
+					}
+				}
+
+				graph[u] = connection
 			}
-			if ok {
-				graph[i] = append(graph[i], v)
-			}
-		}
+
+			wg2.Done()
+		}(start, end)
 	}
+
+	wg2.Wait()
 
 	inbounds = make([]int, n)
 	for i := 0; i < n; i++ {
