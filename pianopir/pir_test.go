@@ -118,6 +118,36 @@ func TestBatchPIRBasic(t *testing.T) {
 		}
 	}
 
+	// we make a batch query with each partition having 4 queries
+
+	batchQuery = make([]uint64, 4*config.PartitionNum)
+	for i := 0; i < int(config.PartitionNum); i++ {
+		start := i * int(config.PartitionSize)
+		end := min((i+1)*int(config.PartitionSize), int(DBSize))
+
+		for j := 0; j < 4; j++ {
+			offset := int(rand.Uint64() % uint64(end-start))
+			// append the query to the batch query
+			batchQuery[i*4+j] = uint64(start + offset)
+		}
+	}
+
+	responses, err = PIR.Query(batchQuery)
+
+	if err != nil {
+		t.Errorf("PIR.Query(%v) failed: %v", batchQuery, err)
+	}
+
+	for i := 0; i < len(batchQuery); i++ {
+		idx := batchQuery[i]
+		query := responses[i]
+		for j := uint64(0); j < DBEntrySize; j++ {
+			if query[j] != rawDB[idx*DBEntrySize+j] {
+				t.Errorf("query[%v] = %v; want %v", idx, query[j], rawDB[idx*DBEntrySize+j])
+			}
+		}
+	}
+
 	//t.Logf("Batch PIR.Query(%v) passed", batchQuery)
 
 	// now make another batch query

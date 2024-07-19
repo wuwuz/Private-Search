@@ -77,8 +77,10 @@ query_filepath = 'msmarco-queries-1000.tsv'
 #result_filepath = 'pir-msmarco-results.txt'
 #frontend_result_filepath = 'go_frontend_result.txt'
 #result_filepath = 'go_frontend_result_docid.txt'
-frontend_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output.txt'
-result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output_docid.txt'
+#frontend_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output.txt'
+#result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output_docid.txt'
+frontend_result_filepath = 'msmarco-dataset/cluster_search_result.txt'
+result_filepath = 'msmarco-dataset/cluster_search_result_docid.txt'
 
 queries = read_queries(query_filepath)
 queries = queries[:max_query_num]

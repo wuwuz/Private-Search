@@ -44,6 +44,7 @@ type SimpleBatchPianoPIR struct {
 	// the following are stats
 
 	FinishedBatchNum        uint64
+	QueriesMadeInPartition  uint64
 	SupportBatchNum         uint64
 	localStorage            uint64  // bytes
 	preprocessingTime       float64 // seconds
@@ -84,9 +85,10 @@ func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint
 	}
 
 	return &SimpleBatchPianoPIR{
-		config:           config,
-		subPIR:           subPIR,
-		FinishedBatchNum: 0,
+		config:                 config,
+		subPIR:                 subPIR,
+		FinishedBatchNum:       0,
+		QueriesMadeInPartition: 0,
 	}
 }
 
@@ -122,6 +124,7 @@ func (p *SimpleBatchPianoPIR) Preprocessing() {
 
 	// we now use p.config.ThreadNum threads to do the preprocessing
 	p.FinishedBatchNum = 0
+	p.QueriesMadeInPartition = 0
 	startTime := time.Now()
 
 	var wg sync.WaitGroup
@@ -162,7 +165,15 @@ func (p *SimpleBatchPianoPIR) DummyPreprocessing() {
 	p.RecordStats(0)
 }
 
+/// TODO: optimize for multiple batch
+
 func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
+
+	// first identify in average how many queries in each partition we need to make
+
+	// this is different from the default
+	queryNumToMake := len(idx) / int(p.config.PartitionNum)
+
 	// first arrange the queries into the partitions
 	partitionQueries := make([][]uint64, p.config.PartitionNum)
 	for i := 0; i < len(idx); i++ {
@@ -180,14 +191,14 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
 		//end := min((i+1)*p.config.PartitionSize, p.config.DBSize)
 
 		// case 1: if there are not enough queries, just pad with random indices in the partition
-		if len(partitionQueries[i]) < QueryPerPartition {
-			for j := uint64(len(partitionQueries[i])); j < QueryPerPartition; j++ {
+		if len(partitionQueries[i]) < queryNumToMake {
+			for j := len(partitionQueries[i]); j < queryNumToMake; j++ {
 				partitionQueries[i] = append(partitionQueries[i], DefaultValue)
 			}
 		}
 
-		// now we make QueryPerPartition queries to the sub PIR
-		for j := uint64(0); j < QueryPerPartition; j++ {
+		// now we make queryNumToMake queries to the sub PIR
+		for j := uint64(0); j < uint64(queryNumToMake); j++ {
 			if partitionQueries[i][j] == DefaultValue {
 				_, _ = p.subPIR[i].Query(0, false) // just make a dummy query
 			} else {
@@ -225,11 +236,12 @@ func (p *SimpleBatchPianoPIR) Query(idx []uint64) ([][]uint64, error) {
 
 	// now test if the subPIR has reached the max query num, redo the preprocessing
 	// -2 means we want to do the preprocessing before the last query
-	if p.FinishedBatchNum*QueryPerPartition >= p.subPIR[0].client.MaxQueryNum-2 {
-		fmt.Printf("Already reached the max query num %v, redo the preprocessing\n", p.FinishedBatchNum)
+	if p.QueriesMadeInPartition >= p.subPIR[0].client.MaxQueryNum-2 {
+		fmt.Printf("Redo preprocessing. Made %v batches (%v queries in a partition), redo the preprocessing\n", p.FinishedBatchNum, p.QueriesMadeInPartition)
 		p.Preprocessing()
 	} else {
-		p.FinishedBatchNum += 1
+		p.FinishedBatchNum += uint64(len(idx) / int(p.config.BatchSize))
+		p.QueriesMadeInPartition += uint64(queryNumToMake)
 	}
 
 	return ret, nil

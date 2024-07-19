@@ -210,17 +210,29 @@ func main() {
 
 	start = time.Now()
 	answers := make([][]int, q)
+
+	maintainenceTime := time.Duration(0)
 	for i := 0; i < q; i++ {
 		if i%100 == 0 {
 			log.Printf("Processing query %d\n", i)
 		}
 		answers[i], _ = frontend.SearchKNN(queries[i], k, *stepN, *parallelN, *benchmarking)
+
+		if queryEngine.PIR.FinishedBatchNum+uint64(*stepN)*uint64(*parallelN)+10 >= queryEngine.PIR.SupportBatchNum {
+			// in this case we need to re-run the preprocessing
+			start := time.Now()
+			queryEngine.PIR.Preprocessing()
+			end := time.Now()
+			maintainenceTime += end.Sub(start)
+		}
 	}
 	end = time.Now()
-	searchTime := end.Sub(start)
+	searchTime := end.Sub(start) - maintainenceTime
 	avgTime := searchTime.Seconds() / float64(q)
-	log.Println("Search time: ", searchTime)
-	log.Println("Average search time: ", searchTime.Seconds()/float64(q), " seconds per query")
+	avgMaintainenceTime := maintainenceTime.Seconds() / float64(q)
+	log.Println("Total Online time: ", searchTime)
+	log.Println("Average search time: ", avgTime, " seconds per query")
+	log.Println("Average maintainence time: ", avgMaintainenceTime, " seconds per query")
 
 	// some stats
 	log.Println("Total query number: ", queryEngine.totalQueryNum)
@@ -300,6 +312,7 @@ func main() {
 		fmt.Fprintf(file, "Online Cost:\n")
 		fmt.Fprintf(file, "** Average Computation Time Per Query (s): %f\n", avgTime)
 		fmt.Fprintf(file, "** Average Total Time Per Q (s): %f\n", avgTime+float64(*rtt)/1000.0*float64(*stepN))
+		fmt.Fprintf(file, "** Average Maintainence Time Per Q (s): %f\n", avgMaintainenceTime)
 		fmt.Fprintf(file, "** Online Communication Per Q (KB): %f\n", float64(OnlineComm)*float64(*stepN)*float64(*parallelN)/1024.0)
 		fmt.Fprintf(file, "-----------------------\n")
 
@@ -435,16 +448,22 @@ func (g *PIRGraphInfo) GetVertexInfo(vertexIds []int) ([]graphann.Vertex, error)
 		indices[i] = uint64(vertexIds[i])
 	}
 
-	responses := make([][]uint64, 0)
-	// by default each time we make a query of batch size [numNeighbors]
-	for i := 0; i < len(indices); i += g.M {
-		// we make a batch query
-		response, err := g.PIR.Query(indices[i : i+g.M])
-		if err != nil {
-			return nil, err
-		}
-		responses = append(responses, response...)
+	responses, err := g.PIR.Query(indices)
+	if err != nil {
+		return nil, err
 	}
+
+	/*
+		responses := make([][]uint64, 0)
+		for i := 0; i < len(indices); i += g.M {
+			// we make a batch query
+			response, err := g.PIR.Query(indices[i : i+g.M])
+			if err != nil {
+				return nil, err
+			}
+			responses = append(responses, response...)
+		}
+	*/
 
 	vertices := make([]graphann.Vertex, len(vertexIds))
 	for i, response := range responses {
