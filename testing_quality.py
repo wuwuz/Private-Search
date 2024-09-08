@@ -1,9 +1,9 @@
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from datetime import datetime
 import heapq
 import os
 import requests
+import argparse
 
 #from cuml.decomposition import PCA as cuPCA
 #from cuml.decomposition import IncrementalPCA as cuIPCA
@@ -73,14 +73,31 @@ def vertex2docid(queries, response, doc_ids, output_filepath, max_query_num = 10
 max_query_num = 1000
 k = 100
 
+
+# adding arguments to the script
+
+
+parser = argparse.ArgumentParser(description='Process some files.')
+
+default_frontend_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output.txt'
+default_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output_docid.txt'
+default_report_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_report.txt'
+
+
+parser.add_argument('-input', default=default_frontend_result_filepath, help='Input file name')
+parser.add_argument('-output', required=default_result_filepath, help='Output file name')
+parser.add_argument('-report', required=default_report_filepath, help='Report file name')
+
+args = parser.parse_args()
+
+
 query_filepath = 'msmarco-queries-1000.tsv'
 #result_filepath = 'pir-msmarco-results.txt'
 #frontend_result_filepath = 'go_frontend_result.txt'
 #result_filepath = 'go_frontend_result_docid.txt'
-#frontend_result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output.txt'
-#result_filepath = 'msmarco-dataset/msmarco_embeddings_3201821_192_32_output_docid.txt'
-frontend_result_filepath = 'msmarco-dataset/cluster_search_result.txt'
-result_filepath = 'msmarco-dataset/cluster_search_result_docid.txt'
+frontend_result_filepath = args.input
+result_filepath = args.output
+report_filepath = args.report
 
 queries = read_queries(query_filepath)
 queries = queries[:max_query_num]
@@ -95,4 +112,5 @@ vertex2docid(queries, response, doc_ids, result_filepath, max_query_num, k)
 
 # use system call to call a python script named "mrr.py"
 os.system("python mrr.py " + result_filepath)
+os.system("python mrr.py " + result_filepath + ">> " + report_filepath)
 #os.system("python mrr.py " + result_filepath + ">> result-priv-ann.txt")

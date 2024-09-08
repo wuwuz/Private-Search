@@ -206,6 +206,9 @@ func main() {
 	prepTime := end.Sub(start)
 	log.Println("Preprocessing time: ", prepTime)
 
+	windowSize := queryEngine.PIR.SupportBatchNum / (uint64(*stepN) * uint64(*parallelN))
+	//expectedMaintainenceTime := prepTime.Seconds() / float64(windowSize)
+
 	// we now make queries
 
 	start = time.Now()
@@ -290,6 +293,7 @@ func main() {
 		config := instance.Config()
 		DBSize := config.DBSize * config.DBEntryByteNum // in bytes
 		PrepTime := instance.PreprocessingTime()
+		MainTimePerQ := PrepTime / float64(instance.SupportBatchNum) * float64(*stepN) * float64(*parallelN)
 		Storage := instance.LocalStorageSize()
 		OnlineComm := instance.CommCostPerBatchOnline()
 		OfflineComm := instance.CommCostPerBatchOffline()
@@ -303,17 +307,22 @@ func main() {
 		fmt.Fprintf(file, "** Rounds: %d\n", *stepN)
 		fmt.Fprintf(file, "** Parallel Exploration: %d\n", *parallelN)
 		fmt.Fprintf(file, "** RTT (ms): %d\n", *rtt)
+		fmt.Fprintf(file, "** Window Size: %d\n", windowSize)
 		fmt.Fprintf(file, "\n")
 		fmt.Fprintf(file, "Preprocessing Cost:\n")
 		fmt.Fprintf(file, "** Storage (MB): %f\n", float64(Storage)/1024.0/1024.0)
 		fmt.Fprintf(file, "** Preparation Time (s): %f\n", PrepTime)
 		fmt.Fprintf(file, "** Offline Communication Cost Per Q (KB, amt.): %f\n", float64(OfflineComm)*float64(*stepN)*float64(*parallelN)/1024.0)
+		fmt.Fprintf(file, "** Amortized Maintainence Time Per Q (s): %f\n", MainTimePerQ)
 		fmt.Fprintf(file, "\n")
 		fmt.Fprintf(file, "Online Cost:\n")
 		fmt.Fprintf(file, "** Average Computation Time Per Query (s): %f\n", avgTime)
 		fmt.Fprintf(file, "** Average Total Time Per Q (s): %f\n", avgTime+float64(*rtt)/1000.0*float64(*stepN))
-		fmt.Fprintf(file, "** Average Maintainence Time Per Q (s): %f\n", avgMaintainenceTime)
+		//fmt.Fprintf(file, "** Average Maintainence Time Per Q (s): %f\n", avgMaintainenceTime)
 		fmt.Fprintf(file, "** Online Communication Per Q (KB): %f\n", float64(OnlineComm)*float64(*stepN)*float64(*parallelN)/1024.0)
+		fmt.Fprintf(file, "\n")
+		fmt.Fprintf(file, "Quality:\n")
+		fmt.Fprintf(file, "** Recall: %f\n", recall)
 		fmt.Fprintf(file, "-----------------------\n")
 
 	}

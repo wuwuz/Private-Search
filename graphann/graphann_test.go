@@ -211,3 +211,74 @@ func TestSearchQuality(t *testing.T) {
 	hnswRecall := ComputeRecall(gnd, hnswAnswer, 10)
 	fmt.Println("HNSW Recall: ", hnswRecall)
 }
+
+// in the following test,
+// we will generate an array with N vectors of dimension D,
+// we will then have a query vector of dimension D.
+// we will compute the sum of the inner productcs between the query vector and all the vectors in the array
+func InnerProduct(a, b *uint32, dim int) uint32
+
+func TestInnerProduct(t *testing.T) {
+
+	// verify the correctness of the SIMD version of inner product
+
+	a := make([]uint32, 128)
+	b := make([]uint32, 128)
+	for i := 0; i < 128; i++ {
+		a[i] = rand.Uint32()
+		b[i] = rand.Uint32()
+	}
+
+	truth := uint32(0)
+	for i := 0; i < 128; i++ {
+		truth += a[i] * b[i]
+	}
+
+	//fmt.Print("Truth: ", truth)
+
+	simdResult := InnerProduct(&a[0], &b[0], 128)
+
+	//fmt.Print("SIMD result: ", simdResult)
+
+	if truth != simdResult {
+		t.Fatalf("InnerProductSIMD does not match the truth: %d != %d", truth, simdResult)
+	} else {
+		fmt.Println("InnerProductSIMD matches the truth")
+	}
+
+	N := 100000000
+	D := 128
+
+	//N := 3201820
+	//D := 192
+
+	vectors := make([]uint32, N*D)
+	query := make([]uint32, D)
+
+	for i := 0; i < N; i++ {
+		for j := 0; j < D; j++ {
+			vectors[i*D+j] = uint32(i + j)
+		}
+	}
+
+	for i := 0; i < D; i++ {
+		query[i] = uint32(i)
+	}
+
+	start := time.Now()
+
+	sum := uint32(0)
+	for i := 0; i < N; i++ {
+		sum += InnerProduct(&vectors[i*D], &query[0], D)
+	}
+
+	//sum := uint32(0)
+	//for i := 0; i < N*D; i++ {
+	//	sum += vectors[i]
+	//	}
+
+	end := time.Now()
+
+	fmt.Println("Inner product sum: ", sum)
+	fmt.Printf("Time to compute %v %v-dim vectors inner product: %v\n", N, D, end.Sub(start))
+}

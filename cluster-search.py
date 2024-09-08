@@ -130,7 +130,16 @@ class cluster_search_index:
         self.offset_of_each_cluster = np.cumsum(size_of_each_cluster)
         self.offset_of_each_cluster = np.concatenate(([0], self.offset_of_each_cluster))
         # now the vectors in the i-th cluster are from offset_of_each_cluster[i] to offset_of_each_cluster[i+1]
-    
+
+
+        # only for testing
+        #self.faiss_index = faiss.IndexFlatL2(int(self.dim))
+
+        # verify the type of the vectors is float32
+        #if vectors.dtype != np.float32:
+        #    raise ValueError("The vectors must be of type float32")
+        #self.faiss_index.add(vectors)
+
     def save_to_file(self, savepath, dataset):
         # we only need to save the centroids and the labels
         print("Saving the index to the file", savepath + "/" + dataset + '-centroids.npy', savepath + "/" + dataset + '-labels.npy')
@@ -188,6 +197,12 @@ class cluster_search_index:
         
         return top_k_idx
 
+    def brute_force_search(self, query, k):
+        D, I = self.faiss_index.search(query.reshape(1, -1), k)
+        I = I.flatten()
+        return I
+
+
 
 def calculate_recall(answers, gnd, k):
     # answers and gnd are both 2d np.array
@@ -213,6 +228,7 @@ def calculate_recall(answers, gnd, k):
 # -query: the query vector file
 # -output: the output file
 # -gnd: the ground truth file
+# -brute: whether to use brute force search
 
 
 
@@ -224,6 +240,7 @@ parser.add_argument("-q", type=int, help="number of queries")
 parser.add_argument("-input", type=str, help="input vector file")
 parser.add_argument("-query", type=str, help="query vector file")
 parser.add_argument("-output", type=str, help="output file")
+parser.add_argument("-report", type=str, help="report file")
 parser.add_argument("-gnd", type=str, help="ground truth file")
 
 args = parser.parse_args()
@@ -235,6 +252,7 @@ input_file = args.input
 query_file = args.query
 output_file = args.output
 gnd_file = args.gnd
+report_file = args.report
 savepath = os.path.dirname(input_file)
 dataset = os.path.basename(input_file) 
 dataset = dataset.split('.')[0]
@@ -279,6 +297,7 @@ start = time.time()
 answers = np.zeros((queries.shape[0], args.k), dtype=np.int32)
 for i in range(queries.shape[0]):
     answers[i] = index.search(queries[i], args.k)
+    #answers[i] = index.brute_force_search(queries[i], args.k)
 end = time.time()
 print("Search time:", end - start)
 print("Average search time:", (end - start) / queries.shape[0]) 
@@ -294,6 +313,8 @@ with open(output_file, 'w') as f:
         f.write("\n")
     
 # if the ground truth file is provided, we calculate the recall
+
+recall = 0.0
 if gnd_file is not None:
     gnd = load_vectors(gnd_file, n, args.k)
     recall = calculate_recall(answers, gnd, args.k)
@@ -301,5 +322,16 @@ if gnd_file is not None:
 else:
     print("No ground truth file provided")
 
+
+if report_file is None:
+    # we use the default report file name
+    report_file = savepath + "/" + dataset + "-cluster-report.txt"
+
+if report_file is not None:
+    print("Writing the report to the file", report_file)
+    with open(report_file, 'w') as f:
+        f.write("Search time: " + str(end - start) + "\n")
+        f.write("Average search time: " + str((end - start) / queries.shape[0]) + "\n")
+        f.write("Recall: " + str(recall) + "\n")
 
 

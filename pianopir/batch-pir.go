@@ -59,7 +59,7 @@ func NewSimpleBatchPianoPIR(DBSize uint64, DBEntryByteNum uint64, BatchSize uint
 	}
 
 	// create the sub PIR classes
-	PartitionNum := BatchSize / RealQueryPerPartition
+	PartitionNum := max(BatchSize/RealQueryPerPartition, 1) // at least one partition
 	//PartitionSize := DBSize / PartitionNum and round up
 	PartitionSize := (DBSize + PartitionNum - 1) / PartitionNum
 
